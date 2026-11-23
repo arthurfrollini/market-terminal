@@ -69,6 +69,27 @@ describe('MarketEngine', () => {
     expect(engine.buildFrame()).toBeNull()
   })
 
+  it('turns the mini ticker into a ticker with the 24h change', () => {
+    const { engine } = setup()
+    const ticker = (o: string) =>
+      msg('miniTicker', { e: '24hrMiniTicker', E: 1, s: 'BTCUSDT', c: '110', o, h: '120', l: '90', v: '5', q: '550' })
+    engine.handleMessage(ticker('100'))
+    expect(engine.buildFrame()!.ticker).toEqual({
+      symbol: 'BTCUSDT', last: 110, open: 100, high: 120, low: 90, baseVolume: 5, quoteVolume: 550, changePct: 10,
+    })
+    expect(engine.buildFrame()).toBeNull()
+
+    engine.handleMessage(ticker('0'))
+    expect(engine.buildFrame()!.ticker!.changePct).toBe(0)
+  })
+
+  it('keeps only the newest trades when the UI stops pulling', () => {
+    const engine = new MarketEngine({ onNeedSnapshot: vi.fn(), maxPendingTrades: 2 })
+    engine.start('BTCUSDT', 1)
+    for (let id = 1; id <= 4; id++) engine.handleMessage(trade(id, '100', '1', false))
+    expect(engine.buildFrame()!.trades.map((t) => t.id)).toEqual([3, 4])
+  })
+
   it('refreshes stats periodically even when the market is quiet', () => {
     const { engine, tick } = setup()
     engine.buildFrame()
