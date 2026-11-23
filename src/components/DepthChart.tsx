@@ -1,0 +1,228 @@
+import { useEffect, useRef } from 'react'
+import { useMarketStore } from '../market/store'
+import type { BookFrame } from '../market/types'
+import { formatCompact, formatFixed } from '../ui/format'
+import { useSymbolInfo } from '../ui/useSymbolInfo'
+
+const PAD = { top: 16, right: 64, bottom: 28, left: 12 }
+const FONT = '11px "Geist Mono", ui-monospace, monospace'
+
+interface Palette {
+  bid: string
+  ask: string
+  grid: string
+  text: string
+  muted: string
+  panel: string
+}
+
+function readPalette(el: Element): Palette {
+  const css = getComputedStyle(el)
+  const v = (name: string) => css.getPropertyValue(name).trim()
+  return { bid: v('--bid'), ask: v('--ask'), grid: v('--line'), text: v('--text'), muted: v('--muted'), panel: v('--panel-raised') }
+}
+
+interface DrawState {
+  width: number
+  height: number
+  hoverX: number | null
+  priceDecimals: number
+  base: string
+}
+
+function draw(ctx: CanvasRenderingContext2D, book: BookFrame | null, s: DrawState, c: Palette): void {
+  const { width, height } = s
+  ctx.clearRect(0, 0, width, height)
+  ctx.font = FONT
+  const plotW = width - PAD.left - PAD.right
+  const plotH = height - PAD.top - PAD.bottom
+  if (plotW <= 0 || plotH <= 0) return
+
+  const { depth, mid } = book ?? {}
+  if (!book || book.status !== 'live' || mid == null || !depth || depth.bids.cumulative.length === 0) {
+    ctx.fillStyle = c.muted
+    ctx.textAlign = 'center'
+    ctx.fillText('Waiting for the order book', width / 2, height / 2)
+    return
+  }
+
+  const lo = mid * (1 - depth.rangePct)
+  const hi = mid * (1 + depth.rangePct)
+  const n = depth.bids.cumulative.length
+  const maxQty = Math.max(depth.bids.cumulative[n - 1], depth.asks.cumulative[n - 1]) * 1.08 || 1
+  const x = (p: number) => PAD.left + ((p - lo) / (hi - lo)) * plotW
+  const y = (q: number) => PAD.top + plotH - (q / maxQty) * plotH
+
+  // Horizontal grid with quantity labels on the right edge.
+  ctx.strokeStyle = c.grid
+  ctx.lineWidth = 1
+  ctx.fillStyle = c.muted
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  for (let i = 1; i <= 4; i++) {
+    const q = (maxQty / 4) * i
+    const gy = Math.round(y(q)) + 0.5
+    ctx.beginPath()
+    ctx.moveTo(PAD.left, gy)
+    ctx.lineTo(PAD.left + plotW, gy)
+    ctx.stroke()
+    ctx.fillText(formatCompact(q), PAD.left + plotW + 8, gy)
+  }
+
+  const side = (prices: Float64Array, cum: Float64Array, color: string) => {
+    ctx.beginPath()
+    ctx.moveTo(x(mid), y(0))
+    let prev = 0
+    for (let i = 0; i < prices.length; i++) {
+      const px = x(prices[i])
+      ctx.lineTo(px, y(prev))
+      ctx.lineTo(px, y(cum[i]))
+      prev = cum[i]
+    }
+    ctx.strokeStyle = color
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+    ctx.lineTo(x(prices[prices.length - 1]), y(0))
+    ctx.closePath()
+    ctx.globalAlpha = 0.16
+    ctx.fillStyle = color
+    ctx.fill()
+    ctx.globalAlpha = 1
+  }
+  side(depth.bids.prices, depth.bids.cumulative, c.bid)
+  side(depth.asks.prices, depth.asks.cumulative, c.ask)
+
+  // Mid line and price axis.
+  const mx = Math.round(x(mid)) + 0.5
+  ctx.setLineDash([3, 4])
+  ctx.strokeStyle = c.muted
+  ctx.beginPath()
+  ctx.moveTo(mx, PAD.top)
+  ctx.lineTo(mx, PAD.top + plotH)
+  ctx.stroke()
+  ctx.setLineDash([])
+  ctx.textBaseline = 'top'
+  ctx.textAlign = 'center'
+  const axisY = PAD.top + plotH + 8
+  for (const f of [0.1, 0.3, 0.7, 0.9]) {
+    const p = lo + (hi - lo) * f
+    ctx.fillStyle = c.muted
+    ctx.fillText(formatFixed(p, s.priceDecimals), x(p), axisY)
+  }
+  ctx.fillStyle = c.text
+  ctx.fillText(formatFixed(mid, s.priceDecimals), mx, axisY)
+
+  if (s.hoverX !== null && s.hoverX >= PAD.left && s.hoverX <= PAD.left + plotW) {
+    const p = lo + ((s.hoverX - PAD.left) / plotW) * (hi - lo)
+    const isBid = p < mid
+    const curve = isBid ? depth.bids : depth.asks
+    const bucket = Math.min(n - 1, Math.max(0, Math.floor((Math.abs(p - mid) / (mid * depth.rangePct)) * n)))
+    const qty = curve.cumulative[bucket]
+    const hx = Math.round(s.hoverX) + 0.5
+    ctx.strokeStyle = c.text
+    ctx.globalAlpha = 0.5
+    ctx.beginPath()
+    ctx.moveTo(hx, PAD.top)
+    ctx.lineTo(hx, PAD.top + plotH)
+    ctx.stroke()
+    ctx.globalAlpha = 1
+
+    const lines = [
+      formatFixed(p, s.priceDecimals),
+      `${formatFixed(qty, 3)} ${s.base} ${isBid ? 'bid down to here' : 'offered up to here'}`,
+    ]
+    const boxW = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 16
+    const boxH = 40
+    const bx = Math.min(Math.max(hx + 10, PAD.left), PAD.left + plotW - boxW)
+    const by = PAD.top + 4
+    ctx.fillStyle = c.panel
+    ctx.fillRect(bx, by, boxW, boxH)
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'top'
+    ctx.fillStyle = c.text
+    ctx.fillText(lines[0], bx + 8, by + 7)
+    ctx.fillStyle = isBid ? c.bid : c.ask
+    ctx.fillText(lines[1], bx + 8, by + 22)
+  }
+}
+
+/**
+ * Painted outside React: the component subscribes to the store directly and redraws on the next
+ * animation frame only when the book changed or the pointer moved.
+ */
+export function DepthChart() {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const info = useSymbolInfo()
+  const view = useRef<DrawState>({ width: 0, height: 0, hoverX: null, priceDecimals: 2, base: '' })
+  const requestDraw = useRef<() => void>(() => {})
+
+  useEffect(() => {
+    view.current.priceDecimals = info.priceDecimals
+    view.current.base = info.baseAsset
+    requestDraw.current()
+  }, [info.priceDecimals, info.baseAsset])
+
+  useEffect(() => {
+    const canvas = canvasRef.current!
+    const ctx = canvas.getContext('2d')!
+    const palette = readPalette(canvas)
+    let raf = 0
+    let draws = 0
+
+    const paint = () => {
+      raf = 0
+      const dpr = window.devicePixelRatio || 1
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      draw(ctx, useMarketStore.getState().book, view.current, palette)
+      canvas.dataset.draws = String(++draws)
+    }
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(paint)
+    }
+    requestDraw.current = schedule
+
+    const resize = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect
+      const dpr = window.devicePixelRatio || 1
+      view.current.width = width
+      view.current.height = height
+      canvas.width = Math.round(width * dpr)
+      canvas.height = Math.round(height * dpr)
+      schedule()
+    })
+    resize.observe(canvas)
+
+    const unsubscribe = useMarketStore.subscribe((s, prev) => {
+      if (s.book !== prev.book) schedule()
+    })
+    const onMove = (e: PointerEvent) => {
+      view.current.hoverX = e.offsetX
+      schedule()
+    }
+    const onLeave = () => {
+      view.current.hoverX = null
+      schedule()
+    }
+    canvas.addEventListener('pointermove', onMove)
+    canvas.addEventListener('pointerleave', onLeave)
+
+    return () => {
+      cancelAnimationFrame(raf)
+      resize.disconnect()
+      unsubscribe()
+      canvas.removeEventListener('pointermove', onMove)
+      canvas.removeEventListener('pointerleave', onLeave)
+      requestDraw.current = () => {}
+    }
+  }, [])
+
+  return (
+    <section className="depth panel" aria-label="Market depth">
+      <div className="panel-head">
+        <h2 className="panel-title">Depth</h2>
+        <span className="panel-meta">Cumulative size within 0.5% of mid</span>
+      </div>
+      <canvas ref={canvasRef} className="depth-canvas" data-testid="depth-canvas" role="img" aria-label="Cumulative bid and ask depth" />
+    </section>
+  )
+}
