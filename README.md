@@ -88,10 +88,15 @@ Open `http://localhost:5173`. Add `?symbol=ETHUSDT` to start on another pair, or
 ```bash
 npm run typecheck
 npm run lint
-npm test        # Vitest: 36 tests
+npm test        # Vitest: 124 tests
+npm run coverage
 npm run e2e     # Playwright: 8 tests
 ```
 
-The unit tests cover the book sync rules (stale snapshots, gaps, buffered diffs), grouping, the indicators, the socket's backoff and watchdog with fake timers, and 500 rounds of the simulated feed at 20,000 msg/s without a gap or a crossed book.
+The unit tests cover the book sync rules (stale snapshots, gaps, buffered diffs), grouping, the indicators, the socket's backoff and watchdog with fake timers, and 500 rounds of the simulated feed at 20,000 msg/s without a gap or a crossed book. The main-thread client runs against a fake worker and a fake `requestAnimationFrame`, which checks that only one pull is ever in flight and that a failed snapshot is retried. The worker entry point runs against a fake WebSocket.
+
+The components are tested with Testing Library in jsdom: the order book ladder, the trade tape with its scroll anchoring (with a stubbed viewport height so the virtualizer renders rows), the status bar controls, the market list and the depth chart, whose canvas calls are recorded by a fake 2D context.
+
+Coverage is 100% of lines and 92% of branches. `npm run coverage` fails below 95% of lines or 85% of branches.
 
 The Playwright tests build the app in e2e mode and run it against a mock of Binance's REST and WebSocket endpoints served from one local Node process. They cover the book and its diffs, trades, reconnecting after the network drops, resyncing after a sequence gap, switching pairs, keeping 3,000 trades with only the visible rows in the DOM, and stress test mode. The `?ws=` and `?rest=` overrides that point the app at the mock only exist in dev and e2e builds; the production build compiles them out.

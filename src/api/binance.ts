@@ -18,7 +18,7 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
 }
 
 /** Retry server errors and rate limits; a 400 (bad symbol) won't fix itself. */
-function retryable(failureCount: number, error: Error): boolean {
+export function retryable(failureCount: number, error: Error): boolean {
   if (error instanceof HttpError && error.status >= 400 && error.status < 500 && error.status !== 429) return false
   return failureCount < 3
 }

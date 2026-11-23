@@ -142,6 +142,15 @@ describe('ReconnectingSocket', () => {
     expect(t.sockets).toHaveLength(1)
   })
 
+  it('ignores connect() while running and drop() while stopped', () => {
+    const t = setup()
+    t.rs.drop()
+    expect(t.sockets).toHaveLength(0)
+    t.rs.connect()
+    t.rs.connect()
+    expect(t.sockets).toHaveLength(1)
+  })
+
   it('retries when the socket constructor throws', () => {
     let calls = 0
     const t = setup({
