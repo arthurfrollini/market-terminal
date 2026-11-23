@@ -19,17 +19,19 @@ A live crypto market screen in the browser: order book, depth chart, trade tape 
 React 19, TypeScript, Vite, TanStack Query, TanStack Virtual and Zustand. Tests run on Vitest and Playwright.
 
 ```mermaid
-flowchart LR
+flowchart TB
   subgraph Binance
-    REST[REST: exchange info, 24h tickers, depth snapshot]
+    direction LR
     WS[WebSocket: depth diffs, trades, mini ticker]
+    REST[REST: exchange info, 24h tickers, depth snapshot]
   end
   subgraph Worker[Web Worker]
+    direction LR
     Socket[ReconnectingSocket] --> Engine[MarketEngine: parse, order book, grouping, indicators]
   end
   subgraph Main[Main thread]
-    Query[TanStack Query] --> Client
-    Client[MarketClient: one pull per animation frame] --> Store[Zustand store]
+    Query[TanStack Query] --> Client[MarketClient: one pull per animation frame]
+    Client --> Store[Zustand store]
     Client --> Tape[(Trade ring buffer, 10k)]
     Store --> Ladder[Order book ladder]
     Store --> Canvas[Depth chart canvas]
@@ -37,9 +39,8 @@ flowchart LR
   end
   WS --> Socket
   REST --> Query
-  Client -- pull --> Engine
   Engine -- frame, typed arrays transferred --> Client
-  Client -- snapshot --> Engine
+  Client -- pull, snapshot --> Engine
 ```
 
 The main thread never touches the socket. A Web Worker owns the connection, parses the JSON, keeps the order book in sync and aggregates it. On each animation frame the UI asks the worker for whatever changed since the last frame, and only one request is in flight at a time. If the UI falls behind, messages pile up in the worker and collapse into the next frame instead of queueing on the main thread. Book levels and depth curves travel as typed arrays that are transferred, not copied.
