@@ -26,6 +26,13 @@ describe('StatusBar', () => {
     expect(metric('book resyncs')).toBe('2')
   })
 
+  it('says the engine is busy on the main thread when it runs there', () => {
+    useMarketStore.setState({ engineThread: 'main', stats: { ...EMPTY_STATS, workerLoad: 0.42 } })
+    renderWithMarket(<StatusBar />)
+    expect(metric('engine busy, main thread')).toBe('42%')
+    expect(screen.queryByText('worker busy')).not.toBeInTheDocument()
+  })
+
   it('shows a dash before the first event and never a negative lag', () => {
     renderWithMarket(<StatusBar />)
     expect(metric('event lag')).toBe('—')

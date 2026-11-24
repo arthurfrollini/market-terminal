@@ -29,6 +29,8 @@ export const SYMBOLS = [
 const requested = params.get('symbol')?.toUpperCase()
 export const DEFAULT_SYMBOL = requested && /^[A-Z0-9]{5,20}$/.test(requested) ? requested : 'BTCUSDT'
 export const START_IN_STRESS = params.get('stress') === '1'
+/** `?engine=main` runs the engine on the main thread instead of the Web Worker, to compare the two. */
+export const ENGINE_THREAD: 'worker' | 'main' = params.get('engine') === 'main' ? 'main' : 'worker'
 
 /** Binance allows up to 5000 levels; deep enough for the ±0.5% depth chart on majors. */
 export const SNAPSHOT_LIMIT = 5000

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { DEFAULT_SYMBOL, START_IN_STRESS, TRADE_TAPE_CAPACITY } from '../config'
+import { DEFAULT_SYMBOL, ENGINE_THREAD, START_IN_STRESS, TRADE_TAPE_CAPACITY } from '../config'
 import type { Interval } from '../domain/candles'
 import type { ResyncReason } from '../domain/orderBook'
 import { RingBuffer } from '../domain/ringBuffer'
@@ -43,6 +43,8 @@ export interface MarketState {
   fps: number
   /** Wall-clock gap between the newest exchange event and the frame reaching the UI. */
   eventLagMs: number | null
+  /** Where the engine runs; `main` only with `?engine=main`. */
+  engineThread: 'worker' | 'main'
 }
 
 export const initialMarketState = (symbol = DEFAULT_SYMBOL): MarketState => ({
@@ -62,6 +64,7 @@ export const initialMarketState = (symbol = DEFAULT_SYMBOL): MarketState => ({
   lastResync: null,
   fps: 0,
   eventLagMs: null,
+  engineThread: ENGINE_THREAD,
 })
 
 export const useMarketStore = create<MarketState>()(() => initialMarketState())

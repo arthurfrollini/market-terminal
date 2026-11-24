@@ -18,6 +18,7 @@ function PerfMetrics() {
   const msgs = useMarketStore((s) => s.stats.msgsPerSec)
   const trades = useMarketStore((s) => s.stats.tradesPerSec)
   const load = useMarketStore((s) => s.stats.workerLoad)
+  const thread = useMarketStore((s) => s.engineThread)
   const lag = useMarketStore((s) => s.eventLagMs)
   const resyncs = useMarketStore((s) => s.resyncs)
   return (
@@ -25,7 +26,7 @@ function PerfMetrics() {
       <Metric label="fps" value={String(fps)} testId="fps" />
       <Metric label="messages/s" value={Math.round(msgs).toLocaleString('en-US')} testId="msgs-per-sec" />
       <Metric label="trades/s" value={Math.round(trades).toLocaleString('en-US')} />
-      <Metric label="worker busy" value={`${(load * 100).toFixed(0)}%`} />
+      <Metric label={thread === 'main' ? 'engine busy, main thread' : 'worker busy'} value={`${(load * 100).toFixed(0)}%`} />
       <Metric label="event lag" value={lag !== null ? `${Math.max(0, Math.round(lag))} ms` : '—'} />
       <Metric label="book resyncs" value={String(resyncs)} testId="resyncs" />
     </div>

@@ -1,6 +1,7 @@
 import { depthSnapshotQuery, klinesQuery, queryClient } from '../api/binance'
-import { WS_BASE } from '../config'
+import { ENGINE_THREAD, WS_BASE } from '../config'
 import type { Interval } from '../domain/candles'
+import { InThreadWorker } from './inThreadWorker'
 import { initialMarketState, tradeTape, useMarketStore, type ChartView } from './store'
 import type { FromWorker, ToWorker, WorkerFrame } from './types'
 
@@ -12,7 +13,7 @@ const FPS_SAMPLE_MS = 500
  * one in flight, so a slow UI makes the worker coalesce harder instead of queueing frames.
  */
 class MarketClient {
-  private worker: Worker | null = null
+  private worker: Worker | InThreadWorker | null = null
   private raf = 0
   private awaitingFrame = false
   private frames = 0
@@ -80,9 +81,12 @@ class MarketClient {
     this.worker?.postMessage(msg)
   }
 
-  private ensureWorker(): Worker {
+  private ensureWorker(): Worker | InThreadWorker {
     if (this.worker) return this.worker
-    const worker = new Worker(new URL('../worker/market.worker.ts', import.meta.url), { type: 'module' })
+    const worker =
+      ENGINE_THREAD === 'main'
+        ? new InThreadWorker()
+        : new Worker(new URL('../worker/market.worker.ts', import.meta.url), { type: 'module' })
     worker.onmessage = (e: MessageEvent<FromWorker>) => this.onMessage(e.data)
     this.worker = worker
     this.fpsSince = performance.now()
