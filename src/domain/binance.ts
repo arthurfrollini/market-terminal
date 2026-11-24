@@ -1,6 +1,8 @@
 // Wire types for Binance spot market-data streams and REST endpoints.
 // https://developers.binance.com/docs/binance-spot-api-docs/web-socket-streams
 
+import type { Interval } from './candles'
+
 export type RawLevel = [price: string, qty: string]
 
 export interface DepthUpdateEvent {
@@ -39,7 +41,29 @@ export interface MiniTickerEvent {
   q: string
 }
 
-export type StreamEvent = DepthUpdateEvent | TradeEvent | MiniTickerEvent
+export interface KlineEvent {
+  e: 'kline'
+  E: number
+  s: string
+  k: {
+    /** Open time. */
+    t: number
+    /** Close time. */
+    T: number
+    s: string
+    /** Interval, e.g. `1m`. */
+    i: string
+    o: string
+    c: string
+    h: string
+    l: string
+    v: string
+    /** Whether the candle is closed. */
+    x: boolean
+  }
+}
+
+export type StreamEvent = DepthUpdateEvent | TradeEvent | MiniTickerEvent | KlineEvent
 
 export interface DepthSnapshot {
   lastUpdateId: number
@@ -47,9 +71,13 @@ export interface DepthSnapshot {
   asks: RawLevel[]
 }
 
-export function streamUrl(wsBase: string, symbol: string): string {
+export function klineStream(symbol: string, interval: Interval): string {
+  return `${symbol.toLowerCase()}@kline_${interval}`
+}
+
+export function streamUrl(wsBase: string, symbol: string, interval: Interval): string {
   const s = symbol.toLowerCase()
-  return `${wsBase}/stream?streams=${s}@depth@100ms/${s}@trade/${s}@miniTicker`
+  return `${wsBase}/stream?streams=${s}@depth@100ms/${s}@trade/${s}@miniTicker/${klineStream(symbol, interval)}`
 }
 
 /** Parses a combined-stream frame (`{ stream, data }`). Returns null for anything else. */
@@ -64,6 +92,6 @@ export function parseStreamMessage(text: string): StreamEvent | null {
   const data = (msg as { data: unknown }).data
   if (typeof data !== 'object' || data === null || !('e' in data)) return null
   const e = (data as { e: unknown }).e
-  if (e === 'depthUpdate' || e === 'trade' || e === '24hrMiniTicker') return data as StreamEvent
+  if (e === 'depthUpdate' || e === 'trade' || e === '24hrMiniTicker' || e === 'kline') return data as StreamEvent
   return null
 }

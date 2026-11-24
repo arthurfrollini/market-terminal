@@ -58,7 +58,7 @@ function startFeed(): void {
   }
   engine.start(engine.symbol, engine.grouping)
   socket = new ReconnectingSocket({
-    url: streamUrl(wsBase, engine.symbol),
+    url: streamUrl(wsBase, engine.symbol, '1m'),
     onMessage: (text) => engine.handleMessage(text),
     // Diffs may have been missed while disconnected, so every open starts a fresh sync.
     onOpen: () => engine.resync('initial'),

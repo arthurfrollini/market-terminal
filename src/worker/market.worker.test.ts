@@ -65,7 +65,7 @@ describe('market worker', () => {
   it('connects to the combined stream and asks for a snapshot on open', () => {
     send(start)
     const [ws] = FakeWebSocket.all
-    expect(ws.url).toBe('wss://host/stream?streams=btcusdt@depth@100ms/btcusdt@trade/btcusdt@miniTicker')
+    expect(ws.url).toBe('wss://host/stream?streams=btcusdt@depth@100ms/btcusdt@trade/btcusdt@miniTicker/btcusdt@kline_1m')
     expect(scope.posted).toContainEqual({
       type: 'status',
       status: { state: 'connecting', attempt: 0, retryInMs: null, source: 'binance' },

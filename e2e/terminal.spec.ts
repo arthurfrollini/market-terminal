@@ -62,7 +62,7 @@ test('switching markets resubscribes to the new symbol', async ({ page, mock }) 
   await page.getByTestId('market-ETHUSDT').click()
   await expect(page.getByTestId('symbol')).toHaveText('ETH/USDT')
   await expect.poll(() => mock.openStreams()).toEqual([
-    ['ethusdt@depth@100ms', 'ethusdt@trade', 'ethusdt@miniTicker'],
+    ['ethusdt@depth@100ms', 'ethusdt@trade', 'ethusdt@miniTicker', 'ethusdt@kline_1m'],
   ])
   await expect(page.getByTestId('order-book')).toHaveAttribute('data-status', 'live')
   expect(mock.snapshotRequests('ETHUSDT')).toBe(1)
