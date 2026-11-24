@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { symbolInfoQuery } from './api/binance'
-import { DepthChart } from './components/DepthChart'
 import { FlowStrip } from './components/FlowStrip'
+import { ChartPanel } from './components/ChartPanel'
 import { MarketList } from './components/MarketList'
 import { OrderBookPanel } from './components/OrderBookPanel'
 import { StatusBar } from './components/StatusBar'
@@ -37,7 +37,7 @@ export function App() {
           </div>
         ) : (
           <>
-            <DepthChart />
+            <ChartPanel />
             <FlowStrip />
             <TradeTape />
           </>

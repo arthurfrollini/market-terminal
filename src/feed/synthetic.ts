@@ -1,11 +1,14 @@
 import { stepDecimals } from '../domain/aggregate'
 import type { DepthSnapshot, RawLevel } from '../domain/binance'
+import { INTERVAL_MS, type Interval } from '../domain/candles'
 
 export interface SyntheticFeedOptions {
   symbol: string
   midPrice: number
   tickSize: number
   messagesPerSecond: number
+  /** Kline interval; defaults to 1m. */
+  interval?: Interval
   onMessage: (text: string) => void
   random?: () => number
   now?: () => number
@@ -13,6 +16,7 @@ export interface SyntheticFeedOptions {
 
 const SNAPSHOT_LEVELS = 1000
 const TICK_MS = 10
+const KLINE_EVERY_MS = 500
 /** Book depth as a fraction of mid, so the depth chart (±0.5%) has a curve, not a wall. */
 const BOOK_SPAN = 0.006
 
@@ -29,7 +33,7 @@ export function mulberry32(seed: number): () => number {
 }
 
 /**
- * Generates a Binance-shaped stream (depth diffs, trades, mini ticker) at a chosen rate,
+ * Generates a Binance-shaped stream (depth diffs, trades, mini ticker, klines) at a chosen rate,
  * serialised to JSON so the worker pays the same parse cost as with the real feed.
  * Prices are tracked in integer ticks so the book can never cross.
  */
@@ -51,9 +55,14 @@ export class SyntheticFeed {
   private volume = 0
   private quoteVolume = 0
   private lastTickerAt = 0
+  private interval: Interval
+  /** The candle being built from this feed's trades; null until the first trade. */
+  private kline: { t: number; o: number; h: number; l: number; c: number; v: number } | null = null
+  private lastKlineAt = -Infinity
 
   constructor(options: SyntheticFeedOptions) {
-    this.o = { random: Math.random, now: Date.now, ...options }
+    this.o = { random: Math.random, now: Date.now, interval: '1m', ...options }
+    this.interval = this.o.interval
     this.decimals = stepDecimals(options.tickSize)
     this.stream = options.symbol.toLowerCase()
     this.bidTick = Math.max(SNAPSHOT_LEVELS * 2, Math.floor(options.midPrice / options.tickSize))
@@ -84,6 +93,11 @@ export class SyntheticFeed {
     this.timer = null
   }
 
+  setInterval(interval: Interval): void {
+    this.interval = interval
+    this.kline = null
+  }
+
   /** Emits one timer slice worth of messages. Public so tests can drive it without timers. */
   tick(): void {
     const exact = (this.o.messagesPerSecond * TICK_MS) / 1000 + this.carry
@@ -97,6 +111,10 @@ export class SyntheticFeed {
     if (now - this.lastTickerAt >= 250) {
       this.lastTickerAt = now
       this.emitTicker(now)
+    }
+    if (this.kline && now - this.lastKlineAt >= KLINE_EVERY_MS) {
+      this.lastKlineAt = now
+      this.emitKline(now)
     }
   }
 
@@ -120,6 +138,7 @@ export class SyntheticFeed {
     const qty = -Math.log(1 - this.o.random()) * 0.05
     const now = this.o.now()
     const price = this.price(tick)
+    this.addToKline(now, price, Number(qty.toFixed(5)))
     this.volume += qty
     this.quoteVolume += qty * price
     this.send('trade', {
@@ -178,6 +197,42 @@ export class SyntheticFeed {
       l: this.low.toFixed(this.decimals),
       v: this.volume.toFixed(5),
       q: this.quoteVolume.toFixed(2),
+    })
+  }
+
+  private addToKline(now: number, price: number, qty: number): void {
+    const ms = INTERVAL_MS[this.interval]
+    const t = Math.floor(now / ms) * ms
+    const k = this.kline
+    if (!k || k.t !== t) {
+      this.kline = { t, o: price, h: price, l: price, c: price, v: qty }
+      return
+    }
+    k.h = Math.max(k.h, price)
+    k.l = Math.min(k.l, price)
+    k.c = price
+    k.v += qty
+  }
+
+  private emitKline(now: number): void {
+    const k = this.kline!
+    const d = this.decimals
+    this.send(`kline_${this.interval}`, {
+      e: 'kline',
+      E: now,
+      s: this.o.symbol,
+      k: {
+        t: k.t,
+        T: k.t + INTERVAL_MS[this.interval] - 1,
+        s: this.o.symbol,
+        i: this.interval,
+        o: k.o.toFixed(d),
+        c: k.c.toFixed(d),
+        h: k.h.toFixed(d),
+        l: k.l.toFixed(d),
+        v: k.v.toFixed(5),
+        x: false,
+      },
     })
   }
 

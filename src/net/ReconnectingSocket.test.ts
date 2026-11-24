@@ -7,6 +7,7 @@ class FakeSocket implements SocketLike {
   onclose: SocketLike['onclose'] = null
   onerror: SocketLike['onerror'] = null
   closedWith: number | null = null
+  sent: string[] = []
   readonly url: string
 
   constructor(url: string) {
@@ -21,6 +22,9 @@ class FakeSocket implements SocketLike {
   }
   serverClose() {
     this.onclose?.({} as CloseEvent)
+  }
+  send(data: string) {
+    this.sent.push(data)
   }
   close(code?: number) {
     this.closedWith = code ?? 1000
@@ -164,5 +168,27 @@ describe('ReconnectingSocket', () => {
     vi.advanceTimersByTime(75)
     expect(calls).toBe(2)
     t.rs.close()
+  })
+
+  it('sends only on an open connection', () => {
+    const t = setup()
+    t.rs.connect()
+    expect(t.rs.send('early')).toBe(false)
+    t.last().open()
+    expect(t.rs.send('hello')).toBe(true)
+    expect(t.last().sent).toEqual(['hello'])
+    t.rs.drop()
+    expect(t.rs.send('while down')).toBe(false)
+  })
+
+  it('uses a new URL on the next connection without reconnecting now', () => {
+    const t = setup()
+    t.rs.connect()
+    t.last().open()
+    t.rs.setUrl('wss://example/other')
+    expect(t.sockets).toHaveLength(1)
+    t.rs.drop()
+    vi.runOnlyPendingTimers()
+    expect(t.last().url).toBe('wss://example/other')
   })
 })

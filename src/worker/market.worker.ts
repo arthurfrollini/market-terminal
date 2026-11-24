@@ -1,4 +1,4 @@
-import { streamUrl } from '../domain/binance'
+import { klineStream, streamUrl } from '../domain/binance'
 import { SyntheticFeed } from '../feed/synthetic'
 import type { ConnStatus, FeedSource, FromWorker, ToWorker } from '../market/types'
 import { ReconnectingSocket } from '../net/ReconnectingSocket'
@@ -19,6 +19,7 @@ function post(msg: FromWorker, transfer: Transferable[] = []): void {
 
 const engine = new MarketEngine({
   onNeedSnapshot: (reason) => post({ type: 'need-snapshot', symbol: engine.symbol, reason }),
+  onNeedHistory: () => post({ type: 'need-history', symbol: engine.symbol, interval: engine.interval }),
 })
 
 let socket: ReconnectingSocket | null = null
@@ -26,6 +27,7 @@ let synthetic: SyntheticFeed | null = null
 let wsBase = ''
 let tickSize = 0.01
 let stress = { enabled: false, messagesPerSecond: 5000 }
+let requestId = 0
 
 function status(source: FeedSource, s: Omit<ConnStatus, 'source'>): void {
   post({ type: 'status', status: { ...s, source } })
@@ -46,22 +48,27 @@ function startFeed(): void {
       midPrice: engine.referencePrice ?? 100,
       tickSize,
       messagesPerSecond: stress.messagesPerSecond,
+      interval: engine.interval,
       onMessage: (text) => engine.handleMessage(text),
     })
     synthetic = feed
     engine.start(engine.symbol, engine.grouping)
     engine.resync('initial', false)
     engine.applySnapshot(engine.symbol, feed.snapshot())
+    engine.requestHistory()
     feed.start()
     status('synthetic', { state: 'open', attempt: 0, retryInMs: null })
     return
   }
   engine.start(engine.symbol, engine.grouping)
   socket = new ReconnectingSocket({
-    url: streamUrl(wsBase, engine.symbol),
+    url: streamUrl(wsBase, engine.symbol, engine.interval),
     onMessage: (text) => engine.handleMessage(text),
     // Diffs may have been missed while disconnected, so every open starts a fresh sync.
-    onOpen: () => engine.resync('initial'),
+    onOpen: () => {
+      engine.resync('initial')
+      engine.requestHistory()
+    },
     onStatus: (s) => status('binance', s),
   })
   socket.connect()
@@ -75,10 +82,27 @@ scope.onmessage = (e) => {
       tickSize = msg.tickSize
       engine.symbol = msg.symbol
       engine.grouping = msg.grouping
+      engine.interval = msg.interval
       startFeed()
       break
     case 'snapshot':
       engine.applySnapshot(msg.symbol, msg.snapshot)
+      break
+    case 'interval': {
+      const previous = engine.interval
+      if (msg.interval === previous) break
+      engine.setInterval(msg.interval)
+      synthetic?.setInterval(msg.interval)
+      if (socket) {
+        // Same socket, so the book keeps its sync. If it's down, the reconnect uses the new URL.
+        socket.send(JSON.stringify({ method: 'UNSUBSCRIBE', params: [klineStream(engine.symbol, previous)], id: ++requestId }))
+        socket.send(JSON.stringify({ method: 'SUBSCRIBE', params: [klineStream(engine.symbol, msg.interval)], id: ++requestId }))
+        socket.setUrl(streamUrl(wsBase, engine.symbol, msg.interval))
+      }
+      break
+    }
+    case 'history':
+      engine.applyHistory(msg.symbol, msg.interval, msg.candles)
       break
     case 'grouping':
       engine.setGrouping(msg.step)

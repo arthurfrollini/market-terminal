@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatCompact, formatFixed, formatPct, formatTime, qtyDecimals } from './format'
+import { formatClock, formatCompact, formatDay, formatFixed, formatPct, formatTime, qtyDecimals } from './format'
 
 describe('format', () => {
   it('formats prices with grouping and a fixed number of decimals', () => {
@@ -22,6 +22,8 @@ describe('format', () => {
 
   it('shows local time down to the millisecond', () => {
     expect(formatTime(new Date(2026, 10, 23, 9, 4, 5, 7).getTime())).toBe('09:04:05.007')
+    expect(formatClock(new Date(2026, 10, 23, 9, 4, 5, 7).getTime())).toBe('09:04')
+    expect(formatDay(new Date(2026, 10, 3, 9, 4).getTime())).toBe('Nov 3')
   })
 
   it('caps quantity decimals at 5', () => {

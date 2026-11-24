@@ -4,6 +4,7 @@ export interface SocketLike {
   onmessage: ((ev: MessageEvent) => void) | null
   onclose: ((ev: CloseEvent) => void) | null
   onerror: ((ev: Event) => void) | null
+  send(data: string): void
   close(code?: number, reason?: string): void
 }
 
@@ -43,6 +44,8 @@ export class ReconnectingSocket {
   private readonly opts: Required<Omit<ReconnectingSocketOptions, 'onOpen' | 'onStatus'>> &
     Pick<ReconnectingSocketOptions, 'onOpen' | 'onStatus'>
   private socket: SocketLike | null = null
+  private isOpen = false
+  private url: string
   private attempt = 0
   private stopped = true
   private lastMessageAt = 0
@@ -59,6 +62,7 @@ export class ReconnectingSocket {
       now: Date.now,
       ...options,
     }
+    this.url = options.url
   }
 
   connect(): void {
@@ -82,6 +86,18 @@ export class ReconnectingSocket {
     this.scheduleReconnect()
   }
 
+  /** Sends on the current connection. Returns false, and drops the message, when there is none. */
+  send(data: string): boolean {
+    if (!this.isOpen) return false
+    this.socket!.send(data)
+    return true
+  }
+
+  /** The URL for the next connection; the current one is left alone. */
+  setUrl(url: string): void {
+    this.url = url
+  }
+
   /** Delay for a given attempt: half the capped exponential plus up to another half at random. */
   backoff(attempt: number): number {
     const cap = Math.min(this.opts.maxDelayMs, this.opts.baseDelayMs * 2 ** attempt)
@@ -93,13 +109,14 @@ export class ReconnectingSocket {
     this.emit(this.attempt === 0 ? 'connecting' : 'reconnecting', null)
     let socket: SocketLike
     try {
-      socket = this.opts.createSocket(this.opts.url)
+      socket = this.opts.createSocket(this.url)
     } catch {
       this.scheduleReconnect()
       return
     }
     this.socket = socket
     socket.onopen = () => {
+      this.isOpen = true
       this.lastMessageAt = this.opts.now()
       this.startWatchdog()
       this.emit('open', null)
@@ -158,6 +175,7 @@ export class ReconnectingSocket {
       s.onopen = s.onmessage = s.onclose = s.onerror = null
     }
     this.socket = null
+    this.isOpen = false
     return s
   }
 

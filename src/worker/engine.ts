@@ -1,11 +1,14 @@
 import { depthCurve, groupLevels } from '../domain/aggregate'
 import { parseStreamMessage, type DepthSnapshot, type StreamEvent } from '../domain/binance'
+import { CandleSeries, type Candle, type Interval } from '../domain/candles'
 import { RollingSum, Vwap, imbalance } from '../domain/indicators'
 import { OrderBook, type ResyncReason } from '../domain/orderBook'
-import type { BookFrame, MarketStats, Ticker, Trade, WorkerFrame } from '../market/types'
+import type { BookFrame, CandleFrame, MarketStats, Ticker, Trade, WorkerFrame } from '../market/types'
 
 export interface MarketEngineOptions {
   onNeedSnapshot: (reason: ResyncReason) => void
+  /** Called whenever the candle series starts over and needs REST history. */
+  onNeedHistory?: () => void
   ladderDepth?: number
   depthBuckets?: number
   depthRangePct?: number
@@ -25,10 +28,13 @@ const IMBALANCE_LEVELS = 10
 export class MarketEngine {
   symbol = ''
   grouping = 0.01
+  interval: Interval = '1m'
   private readonly o: Required<MarketEngineOptions>
   private readonly book = new OrderBook()
   private pendingTrades: Trade[] = []
   private ticker: Ticker | null = null
+  private readonly candles = new CandleSeries()
+  private candlesDirty = false
   private bookDirty = false
   private tickerDirty = false
   private lastFrameAt = 0
@@ -48,6 +54,7 @@ export class MarketEngine {
       depthBuckets: 120,
       depthRangePct: 0.005,
       maxPendingTrades: 2000,
+      onNeedHistory: () => {},
       now: Date.now,
       clock: () => performance.now(),
       ...options,
@@ -84,6 +91,8 @@ export class MarketEngine {
     this.lastTradePrice = null
     this.bookDirty = true
     this.tickerDirty = true
+    this.candles.clear()
+    this.candlesDirty = true
   }
 
   /**
@@ -94,6 +103,27 @@ export class MarketEngine {
     this.book.reset()
     this.bookDirty = true
     if (request) this.o.onNeedSnapshot(reason)
+  }
+
+  /**
+   * Starts the candle series over and asks for history; called on every (re)connect, so
+   * candles that closed while offline come from REST instead of the last partial update.
+   */
+  requestHistory(): void {
+    this.candles.clear()
+    this.candlesDirty = true
+    this.o.onNeedHistory()
+  }
+
+  setInterval(interval: Interval): void {
+    this.interval = interval
+    this.requestHistory()
+  }
+
+  applyHistory(symbol: string, interval: Interval, candles: Candle[]): void {
+    if (symbol !== this.symbol || interval !== this.interval) return
+    this.candles.merge(candles)
+    this.candlesDirty = true
   }
 
   setGrouping(step: number): void {
@@ -159,6 +189,21 @@ export class MarketEngine {
         this.tickerDirty = true
         break
       }
+      case 'kline': {
+        // A kline for the old interval can still be in flight after UNSUBSCRIBE.
+        if (ev.k.i !== this.interval) break
+        const k = ev.k
+        this.candles.upsert({
+          openTime: k.t,
+          open: Number(k.o),
+          high: Number(k.h),
+          low: Number(k.l),
+          close: Number(k.c),
+          volume: Number(k.v),
+        })
+        this.candlesDirty = true
+        break
+      }
     }
   }
 
@@ -169,7 +214,8 @@ export class MarketEngine {
   buildFrame(): WorkerFrame | null {
     const now = this.o.now()
     const hasTrades = this.pendingTrades.length > 0
-    if (!this.bookDirty && !this.tickerDirty && !hasTrades && now - this.lastFrameAt < STATS_REFRESH_MS) {
+    const quiet = !this.bookDirty && !this.tickerDirty && !this.candlesDirty && !hasTrades
+    if (quiet && now - this.lastFrameAt < STATS_REFRESH_MS) {
       return null
     }
     const trades = this.pendingTrades.length > this.o.maxPendingTrades
@@ -182,11 +228,13 @@ export class MarketEngine {
       book: this.bookDirty ? this.buildBook() : null,
       trades,
       ticker: this.tickerDirty ? this.ticker : null,
+      candles: this.candlesDirty ? this.buildCandles() : null,
       stats: this.buildStats(now),
     }
     this.pendingTrades = []
     this.bookDirty = false
     this.tickerDirty = false
+    this.candlesDirty = false
     this.lastFrameAt = now
     return frame
   }
@@ -217,6 +265,10 @@ export class MarketEngine {
     }
   }
 
+  private buildCandles(): CandleFrame {
+    return { symbol: this.symbol, interval: this.interval, ...this.candles.toArrays() }
+  }
+
   private buildStats(now: number): MarketStats {
     const buy = this.buyVolume.sum(now)
     const sell = this.sellVolume.sum(now)
@@ -239,15 +291,18 @@ export class MarketEngine {
 
 /** Typed-array buffers in a frame, so postMessage can move them instead of copying. */
 export function frameTransferables(frame: WorkerFrame): Transferable[] {
+  const buffers: ArrayBufferLike[] = []
   const b = frame.book
-  if (!b) return []
-  // A Set because listing the same buffer twice makes postMessage throw (DataCloneError).
-  return [
-    ...new Set([
+  if (b) {
+    buffers.push(
       b.bids.prices.buffer, b.bids.qtys.buffer, b.bids.totals.buffer,
       b.asks.prices.buffer, b.asks.qtys.buffer, b.asks.totals.buffer,
       b.depth.bids.prices.buffer, b.depth.bids.cumulative.buffer,
       b.depth.asks.prices.buffer, b.depth.asks.cumulative.buffer,
-    ]),
-  ]
+    )
+  }
+  const c = frame.candles
+  if (c) buffers.push(c.time.buffer, c.open.buffer, c.high.buffer, c.low.buffer, c.close.buffer, c.volume.buffer, c.ema.buffer, c.rsi.buffer)
+  // A Set because listing the same buffer twice makes postMessage throw (DataCloneError).
+  return [...new Set(buffers)] as Transferable[]
 }

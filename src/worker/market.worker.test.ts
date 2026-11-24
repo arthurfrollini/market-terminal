@@ -8,11 +8,15 @@ class FakeWebSocket {
   onclose: ((ev: CloseEvent) => void) | null = null
   onerror: ((ev: Event) => void) | null = null
   closedWith: number | null = null
+  sent: string[] = []
   readonly url: string
 
   constructor(url: string) {
     this.url = url
     FakeWebSocket.all.push(this)
+  }
+  send(text: string) {
+    this.sent.push(text)
   }
   close(code?: number) {
     this.closedWith = code ?? 1000
@@ -41,7 +45,7 @@ function pull() {
   return reply.frame
 }
 
-const start = { type: 'start', symbol: 'BTCUSDT', wsBase: 'wss://host', grouping: 0.01, tickSize: 0.01 } as const
+const start = { type: 'start', symbol: 'BTCUSDT', wsBase: 'wss://host', grouping: 0.01, tickSize: 0.01, interval: '1m' } as const
 
 beforeEach(async () => {
   vi.useFakeTimers()
@@ -65,7 +69,7 @@ describe('market worker', () => {
   it('connects to the combined stream and asks for a snapshot on open', () => {
     send(start)
     const [ws] = FakeWebSocket.all
-    expect(ws.url).toBe('wss://host/stream?streams=btcusdt@depth@100ms/btcusdt@trade/btcusdt@miniTicker')
+    expect(ws.url).toBe('wss://host/stream?streams=btcusdt@depth@100ms/btcusdt@trade/btcusdt@miniTicker/btcusdt@kline_1m')
     expect(scope.posted).toContainEqual({
       type: 'status',
       status: { state: 'connecting', attempt: 0, retryInMs: null, source: 'binance' },
@@ -73,6 +77,33 @@ describe('market worker', () => {
 
     ws.onopen!(new Event('open'))
     expect(scope.posted).toContainEqual({ type: 'need-snapshot', symbol: 'BTCUSDT', reason: 'initial' })
+    expect(scope.posted).toContainEqual({ type: 'need-history', symbol: 'BTCUSDT', interval: '1m' })
+  })
+
+  it('switches the kline stream on the open socket when the interval changes', () => {
+    send(start)
+    const [ws] = FakeWebSocket.all
+    ws.onopen!(new Event('open'))
+    scope.posted = []
+    send({ type: 'interval', interval: '5m' })
+    expect(ws.sent.map((t) => JSON.parse(t))).toEqual([
+      { method: 'UNSUBSCRIBE', params: ['btcusdt@kline_1m'], id: 1 },
+      { method: 'SUBSCRIBE', params: ['btcusdt@kline_5m'], id: 2 },
+    ])
+    expect(scope.posted).toEqual([{ type: 'need-history', symbol: 'BTCUSDT', interval: '5m' }])
+    expect(FakeWebSocket.all).toHaveLength(1)
+
+    // A later reconnect opens straight onto the new interval.
+    send({ type: 'drop' })
+    vi.advanceTimersByTime(1_000)
+    expect(FakeWebSocket.all[1].url).toContain('btcusdt@kline_5m')
+  })
+
+  it('applies history for the current interval', () => {
+    send(start)
+    const candle = { openTime: 0, open: 1, high: 2, low: 0.5, close: 1.5, volume: 3 }
+    send({ type: 'history', symbol: 'BTCUSDT', interval: '1m', candles: [candle] })
+    expect(Array.from(pull()!.candles!.close)).toEqual([1.5])
   })
 
   it('applies the snapshot and stream messages, then answers pulls with a frame', () => {
@@ -113,6 +144,7 @@ describe('market worker', () => {
 
     send(start)
     expect(FakeWebSocket.all).toHaveLength(0)
+    expect(scope.posted).toContainEqual({ type: 'need-history', symbol: 'BTCUSDT', interval: '1m' })
     expect(scope.posted).toContainEqual({
       type: 'status',
       status: { state: 'open', attempt: 0, retryInMs: null, source: 'synthetic' },
@@ -121,6 +153,16 @@ describe('market worker', () => {
     const frame = pull()
     expect(frame?.book?.status).toBe('live')
     expect(frame?.stats.msgsPerSec).toBeGreaterThan(0)
+  })
+
+  it('builds candles for the new interval from the synthetic feed', () => {
+    send({ type: 'stress', enabled: true, messagesPerSecond: 1_000 })
+    send(start)
+    send({ type: 'interval', interval: '5m' })
+    vi.advanceTimersByTime(600)
+    const candles = pull()!.candles!
+    expect(candles.interval).toBe('5m')
+    expect(candles.time).toHaveLength(1)
   })
 
   it('switching stress off closes the synthetic feed and opens the socket', () => {

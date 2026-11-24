@@ -300,17 +300,55 @@ select {
   min-height: 0;
 }
 
-.depth {
-  min-height: 220px;
+.chart {
+  min-height: 260px;
 }
 
-.depth-canvas {
+.chart-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.chart-canvas {
   flex: 1;
   min-height: 0;
   width: 100%;
   display: block;
   cursor: crosshair;
   touch-action: none;
+}
+
+.chart-tabs {
+  display: flex;
+  gap: 16px;
+}
+
+.chart-tab {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 2px 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.chart-tab[aria-selected='true'] {
+  color: var(--text);
+  border-bottom-color: var(--focus);
+}
+
+.intervals {
+  display: flex;
+  gap: 4px;
+}
+
+.interval {
+  padding: 2px 8px;
+  font-family: var(--font-num);
+  font-size: 12px;
 }
 
 .flow {

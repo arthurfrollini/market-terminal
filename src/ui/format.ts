@@ -35,3 +35,16 @@ export function formatTime(ms: number): string {
 export function qtyDecimals(stepDecimals: number): number {
   return Math.min(stepDecimals, 5)
 }
+
+/** Local HH:MM, for chart time axes. */
+export function formatClock(ms: number): string {
+  const d = new Date(ms)
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+const day = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
+
+/** Local "Nov 3", for chart axes that span several days. */
+export function formatDay(ms: number): string {
+  return day.format(ms)
+}

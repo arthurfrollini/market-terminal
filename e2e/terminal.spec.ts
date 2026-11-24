@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures'
-import { depthUpdate, tradeEvent } from './mockBinance'
+import { depthUpdate, klineEvent, tradeEvent } from './mockBinance'
 
 const DEPTH = 'btcusdt@depth@100ms'
 const TRADES = 'btcusdt@trade'
@@ -62,7 +62,7 @@ test('switching markets resubscribes to the new symbol', async ({ page, mock }) 
   await page.getByTestId('market-ETHUSDT').click()
   await expect(page.getByTestId('symbol')).toHaveText('ETH/USDT')
   await expect.poll(() => mock.openStreams()).toEqual([
-    ['ethusdt@depth@100ms', 'ethusdt@trade', 'ethusdt@miniTicker'],
+    ['ethusdt@depth@100ms', 'ethusdt@trade', 'ethusdt@miniTicker', 'ethusdt@kline_1m'],
   ])
   await expect(page.getByTestId('order-book')).toHaveAttribute('data-status', 'live')
   expect(mock.snapshotRequests('ETHUSDT')).toBe(1)
@@ -83,5 +83,26 @@ test('stress mode switches to the simulated feed at high rate', async ({ page })
     .poll(async () => Number((await page.getByTestId('msgs-per-sec').textContent())?.replace(/,/g, '')))
     .toBeGreaterThan(1000)
   await expect(page.getByTestId('order-book')).toHaveAttribute('data-status', 'live')
+  await page.getByRole('tab', { name: 'Depth' }).click()
   await expect.poll(async () => Number(await page.getByTestId('depth-canvas').getAttribute('data-draws'))).toBeGreaterThan(10)
+})
+
+test('draws candles and switches interval without reconnecting', async ({ page, mock }) => {
+  const draws = async () => Number(await page.getByTestId('candle-canvas').getAttribute('data-draws'))
+  await expect.poll(() => mock.klineRequests('BTCUSDT', '1m')).toBe(1)
+  await expect.poll(draws).toBeGreaterThan(0)
+  const before = await draws()
+  const minute = Math.floor(Date.now() / 60_000) * 60_000
+  mock.send('btcusdt@kline_1m', klineEvent('BTCUSDT', '1m', { t: minute, o: '100.00', h: '101.00', l: '99.50', c: '100.80', v: '3.5' }))
+  await expect.poll(draws).toBeGreaterThan(before)
+
+  const connections = mock.totalConnections
+  await page.getByRole('button', { name: '5m', exact: true }).click()
+  await expect.poll(() => mock.openStreams()).toEqual([
+    ['btcusdt@depth@100ms', 'btcusdt@trade', 'btcusdt@miniTicker', 'btcusdt@kline_5m'],
+  ])
+  await expect.poll(() => mock.klineRequests('BTCUSDT', '5m')).toBe(1)
+  expect(mock.totalConnections).toBe(connections)
+  await expect(page.getByTestId('resyncs')).toHaveText('0')
+  await expect(page.getByTestId('order-book')).toHaveAttribute('data-status', 'live')
 })

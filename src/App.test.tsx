@@ -38,7 +38,7 @@ describe('App', () => {
     expect(start).not.toHaveBeenCalled()
 
     await waitFor(() => expect(start).toHaveBeenCalledWith('BTCUSDT', 0.01))
-    for (const name of ['Markets', 'Market depth', 'Order flow', 'Trades', 'Order book']) {
+    for (const name of ['Markets', 'Chart', 'Order flow', 'Trades', 'Order book']) {
       expect(screen.getByRole(name === 'Markets' ? 'navigation' : 'region', { name })).toBeInTheDocument()
     }
     unmount()
@@ -53,7 +53,7 @@ describe('App', () => {
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent("Couldn't load BTCUSDT market details, so the live feed hasn't started.")
-    expect(screen.queryByTestId('depth-canvas')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('candle-canvas')).not.toBeInTheDocument()
 
     fetchMock.mockImplementation(async (url) =>
       String(url).includes('exchangeInfo') ? new Response(JSON.stringify(exchangeInfo)) : new Response('[]'),

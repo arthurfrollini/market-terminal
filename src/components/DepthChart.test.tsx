@@ -1,24 +1,11 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { useMarketStore } from '../market/store'
-import { FakeResizeObserver, animationFrame, liveBook, pendingFrames, renderWithMarket } from '../test/dom'
+import { FakeResizeObserver, animationFrame, fakeCanvasContext, liveBook, pendingFrames, renderWithMarket } from '../test/dom'
 import { DepthChart } from './DepthChart'
 
-/** Records what gets written on the canvas; every other 2D context call is a no-op. */
 let texts: string[] = []
-const ctx = new Proxy({} as Record<string | symbol, unknown>, {
-  get(target, key) {
-    if (key in target) return target[key]
-    if (key === 'fillText') return (text: string) => texts.push(text)
-    if (key === 'measureText') return (text: string) => ({ width: text.length * 6 })
-    return () => {}
-  },
-  set(target, key, value) {
-    target[key] = value
-    return true
-  },
-})
 
 const book = liveBook(
   [[61_236, 1], [61_200, 2], [61_000, 3]],
@@ -26,7 +13,7 @@ const book = liveBook(
 )
 
 function setup() {
-  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as unknown as CanvasRenderingContext2D)
+  texts = fakeCanvasContext().texts
   renderWithMarket(<DepthChart />)
   const canvas = screen.getByTestId('depth-canvas') as HTMLCanvasElement
   act(() => FakeResizeObserver.all[0].resize(600, 300))
@@ -38,10 +25,6 @@ function hover(canvas: HTMLCanvasElement, offsetX: number) {
   Object.defineProperty(event, 'offsetX', { value: offsetX })
   fireEvent(canvas, event)
 }
-
-beforeEach(() => {
-  texts = []
-})
 
 describe('DepthChart', () => {
   it('sizes the canvas for the device pixel ratio', () => {
@@ -84,23 +67,23 @@ describe('DepthChart', () => {
     paint()
 
     hover(canvas, 100)
-    texts = []
+    texts.length = 0
     paint()
     expect(texts.some((t) => t.endsWith('BTC bid down to here'))).toBe(true)
 
     hover(canvas, 500)
-    texts = []
+    texts.length = 0
     paint()
     expect(texts.some((t) => t.endsWith('BTC offered up to here'))).toBe(true)
 
     fireEvent.pointerLeave(canvas)
-    texts = []
+    texts.length = 0
     paint()
     expect(texts.some((t) => t.includes('here'))).toBe(false)
   })
 
   it('stops painting after unmount', () => {
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as unknown as CanvasRenderingContext2D)
+    fakeCanvasContext()
     const { unmount } = renderWithMarket(<DepthChart />)
     unmount()
     expect(FakeResizeObserver.all[0].disconnected).toBe(true)

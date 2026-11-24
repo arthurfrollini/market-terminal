@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DepthSnapshot } from '../domain/binance'
+import type { Candle } from '../domain/candles'
 import { SyntheticFeed, mulberry32 } from '../feed/synthetic'
 import { MarketEngine, frameTransferables } from './engine'
 
@@ -8,6 +9,9 @@ const depth = (U: number, u: number, b: [string, string][] = [], a: [string, str
   msg('depth@100ms', { e: 'depthUpdate', E: 1, s: 'BTCUSDT', U, u, b, a })
 const trade = (t: number, p: string, q: string, m: boolean) =>
   msg('trade', { e: 'trade', E: 1, s: 'BTCUSDT', t, p, q, T: 1, m })
+const kline = (t: number, c: string, i = '1m') =>
+  msg(`kline_${i}`, { e: 'kline', E: 1, s: 'BTCUSDT', k: { t, T: t + 59_999, s: 'BTCUSDT', i, o: '100', c, h: '110', l: '90', v: '7', x: false } })
+const candle = (openTime: number, close: number): Candle => ({ openTime, open: close, high: close, low: close, close, volume: 1 })
 
 const snapshot: DepthSnapshot = {
   lastUpdateId: 10,
@@ -18,9 +22,10 @@ const snapshot: DepthSnapshot = {
 function setup() {
   let now = 1_000
   const onNeedSnapshot = vi.fn()
-  const engine = new MarketEngine({ onNeedSnapshot, now: () => now, clock: () => 0, depthBuckets: 4 })
+  const onNeedHistory = vi.fn()
+  const engine = new MarketEngine({ onNeedSnapshot, onNeedHistory, now: () => now, clock: () => 0, depthBuckets: 4 })
   engine.start('BTCUSDT', 1)
-  return { engine, onNeedSnapshot, tick: (ms: number) => (now += ms) }
+  return { engine, onNeedSnapshot, onNeedHistory, tick: (ms: number) => (now += ms) }
 }
 
 describe('MarketEngine', () => {
@@ -130,12 +135,86 @@ describe('MarketEngine', () => {
     engine.setGrouping(0.01)
     engine.resync('initial', false)
     engine.applySnapshot('BTCUSDT', feed.snapshot())
+    let candles = 0
     for (let i = 0; i < 500; i++) {
       feed.tick()
-      const book = engine.buildFrame()?.book
+      const frame = engine.buildFrame()
+      const book = frame?.book
       if (book) expect(book.bestBid!).toBeLessThan(book.bestAsk!)
+      if (frame?.candles) candles = frame.candles.time.length
     }
+    expect(candles).toBe(1)
     expect(onNeedSnapshot).not.toHaveBeenCalled()
     expect(engine.bookState).toBe('live')
   }, 30_000) // ~2 s locally with coverage, over 5 s on a busy CI runner
+
+  describe('candles', () => {
+    const closes = (frame: ReturnType<MarketEngine['buildFrame']>) => Array.from(frame!.candles!.close)
+
+    it('puts a kline in the next frame, then sends no candles until they change', () => {
+      const { engine } = setup()
+      engine.handleMessage(kline(0, '105'))
+      const candles = engine.buildFrame()!.candles!
+      expect(candles).toMatchObject({ symbol: 'BTCUSDT', interval: '1m' })
+      expect([candles.time[0], candles.open[0], candles.high[0], candles.low[0], candles.close[0], candles.volume[0]])
+        .toEqual([0, 100, 110, 90, 105, 7])
+      engine.handleMessage(trade(1, '100', '1', false))
+      expect(engine.buildFrame()!.candles).toBeNull()
+    })
+
+    it('ignores klines for another interval, like one in flight after unsubscribing', () => {
+      const { engine } = setup()
+      engine.setInterval('5m')
+      engine.handleMessage(kline(0, '105', '1m'))
+      expect(engine.buildFrame()!.candles!.time).toHaveLength(0)
+    })
+
+    it('asks for history when the interval changes', () => {
+      const { engine, onNeedHistory } = setup()
+      engine.setInterval('15m')
+      expect(engine.interval).toBe('15m')
+      expect(onNeedHistory).toHaveBeenCalledTimes(1)
+    })
+
+    it('ignores history for a symbol or interval it no longer shows', () => {
+      const { engine } = setup()
+      engine.applyHistory('ETHUSDT', '1m', [candle(0, 1)])
+      engine.applyHistory('BTCUSDT', '5m', [candle(0, 1)])
+      expect(engine.buildFrame()!.candles!.time).toHaveLength(0)
+    })
+
+    it('starts over on a history request, so candles closed while offline come from REST', () => {
+      const { engine } = setup()
+      engine.handleMessage(kline(0, '105')) // last update before the connection dropped
+      engine.requestHistory()
+      engine.applyHistory('BTCUSDT', '1m', [candle(0, 120), candle(60_000, 130)])
+      expect(closes(engine.buildFrame())).toEqual([120, 130])
+    })
+
+    it('keeps a kline that arrived after the history request over the history', () => {
+      const { engine } = setup()
+      engine.requestHistory()
+      engine.handleMessage(kline(60_000, '131'))
+      engine.applyHistory('BTCUSDT', '1m', [candle(0, 120), candle(60_000, 130)])
+      expect(closes(engine.buildFrame())).toEqual([120, 131])
+    })
+
+    it('forgets candles when the symbol changes', () => {
+      const { engine } = setup()
+      engine.handleMessage(kline(0, '105'))
+      engine.start('ETHUSDT', 1)
+      expect(engine.buildFrame()!.candles!.time).toHaveLength(0)
+    })
+
+    it('lists every candle buffer once for transfer, next to the book', () => {
+      const { engine } = setup()
+      engine.resync('initial')
+      engine.handleMessage(kline(0, '105'))
+      const frame = engine.buildFrame()!
+      const list = frameTransferables(frame)
+      expect(list).toContain(frame.candles!.close.buffer)
+      expect(list).toContain(frame.book!.bids.prices.buffer)
+      expect(new Set(list).size).toBe(list.length)
+    })
+  })
 })

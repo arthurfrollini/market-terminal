@@ -1,9 +1,10 @@
-import { depthSnapshotQuery, queryClient } from '../api/binance'
+import { depthSnapshotQuery, klinesQuery, queryClient } from '../api/binance'
 import { WS_BASE } from '../config'
-import { initialMarketState, tradeTape, useMarketStore } from './store'
+import type { Interval } from '../domain/candles'
+import { initialMarketState, tradeTape, useMarketStore, type ChartView } from './store'
 import type { FromWorker, ToWorker, WorkerFrame } from './types'
 
-const SNAPSHOT_RETRY_MS = 2_000
+const RETRY_MS = 2_000
 const FPS_SAMPLE_MS = 500
 
 /**
@@ -16,12 +17,14 @@ class MarketClient {
   private awaitingFrame = false
   private frames = 0
   private fpsSince = 0
+  /** Bumped on every history request, so a retry for an older one gives up. */
+  private historyRequest = 0
 
   start(symbol: string, tickSize: number): void {
     const worker = this.ensureWorker()
-    const { stress, stressRate, grouping } = useMarketStore.getState()
+    const { stress, stressRate, grouping, interval } = useMarketStore.getState()
     worker.postMessage({ type: 'stress', enabled: stress, messagesPerSecond: stressRate } satisfies ToWorker)
-    this.send({ type: 'start', symbol, wsBase: WS_BASE, grouping: grouping ?? tickSize, tickSize })
+    this.send({ type: 'start', symbol, wsBase: WS_BASE, grouping: grouping ?? tickSize, tickSize, interval })
   }
 
   stop(): void {
@@ -32,16 +35,26 @@ class MarketClient {
   }
 
   selectSymbol(symbol: string): void {
-    const { symbol: current, stress, stressRate } = useMarketStore.getState()
+    const { symbol: current, stress, stressRate, interval, chartView } = useMarketStore.getState()
     if (symbol === current) return
     tradeTape.clear()
     // Keep user preferences, drop everything tied to the old symbol.
-    useMarketStore.setState({ ...initialMarketState(symbol), stress, stressRate })
+    useMarketStore.setState({ ...initialMarketState(symbol), stress, stressRate, interval, chartView })
   }
 
   setGrouping(step: number): void {
     useMarketStore.setState({ grouping: step })
     this.send({ type: 'grouping', step })
+  }
+
+  setInterval(interval: Interval): void {
+    if (interval === useMarketStore.getState().interval) return
+    useMarketStore.setState({ interval, candles: null })
+    this.send({ type: 'interval', interval })
+  }
+
+  setChartView(chartView: ChartView): void {
+    useMarketStore.setState({ chartView })
   }
 
   setStress(enabled: boolean, messagesPerSecond = useMarketStore.getState().stressRate): void {
@@ -51,6 +64,7 @@ class MarketClient {
       stressRate: messagesPerSecond,
       book: null,
       ticker: null,
+      candles: null,
       tradesTotal: 0,
       eventLagMs: null,
     })
@@ -106,16 +120,23 @@ class MarketClient {
         }))
         void this.loadSnapshot(msg.symbol)
         break
+      case 'need-history':
+        void this.loadHistory(msg.symbol, msg.interval, ++this.historyRequest)
+        break
     }
   }
 
   private applyFrame(frame: WorkerFrame): void {
-    if (frame.symbol !== useMarketStore.getState().symbol) return
+    const { symbol, interval } = useMarketStore.getState()
+    if (frame.symbol !== symbol) return
+    // Candles built before an interval change can still be in flight.
+    const candles = frame.candles?.interval === interval ? frame.candles : null
     const fresh = frame.trades.length > 0 || frame.book !== null
     if (frame.trades.length > 0) tradeTape.pushMany(frame.trades)
     useMarketStore.setState((s) => ({
       book: frame.book ?? s.book,
       ticker: frame.ticker ?? s.ticker,
+      candles: candles ?? s.candles,
       stats: frame.stats,
       tradesTotal: s.tradesTotal + frame.trades.length,
       eventLagMs: fresh && frame.stats.lastEventTime > 0 ? Date.now() - frame.stats.lastEventTime : s.eventLagMs,
@@ -131,7 +152,22 @@ class MarketClient {
       setTimeout(() => {
         const { symbol: current, book, stress } = useMarketStore.getState()
         if (symbol === current && !stress && book?.status !== 'live') void this.loadSnapshot(symbol)
-      }, SNAPSHOT_RETRY_MS)
+      }, RETRY_MS)
+    }
+  }
+
+  private async loadHistory(symbol: string, interval: Interval, request: number): Promise<void> {
+    const current = () => {
+      const s = useMarketStore.getState()
+      return request === this.historyRequest && symbol === s.symbol && interval === s.interval
+    }
+    try {
+      const candles = await queryClient.fetchQuery(klinesQuery(symbol, interval))
+      if (current()) this.send({ type: 'history', symbol, interval, candles })
+    } catch {
+      setTimeout(() => {
+        if (current()) void this.loadHistory(symbol, interval, request)
+      }, RETRY_MS)
     }
   }
 }
