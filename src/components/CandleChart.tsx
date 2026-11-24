@@ -186,7 +186,9 @@ function draw(ctx: CanvasRenderingContext2D, candles: CandleFrame | null, s: Dra
   ctx.textBaseline = 'top'
   const every = Math.max(1, Math.ceil(TIME_LABEL_SPACING / slot))
   for (let i = n - 1 - Math.floor(every / 2); i >= first; i -= every) {
-    ctx.fillText(formatClock(time[i]), cx(i), PAD.top + plotH + 6)
+    const label = formatClock(time[i])
+    if (cx(i) - ctx.measureText(label).width / 2 < PAD.left) break
+    ctx.fillText(label, cx(i), PAD.top + plotH + 6)
   }
 
   // Crosshair on the candle under the pointer, with the price at the pointer on the axis.

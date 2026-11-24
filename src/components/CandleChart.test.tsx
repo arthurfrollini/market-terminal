@@ -101,6 +101,16 @@ describe('CandleChart', () => {
     for (const r of bodies) expect(r.y).toBeGreaterThanOrEqual(legendBottom)
   })
 
+  it('drops a time label that would spill past the left edge of the plot', () => {
+    // At 644 px, 92 candles fit in 6 px slots and every 14th gets a label, the oldest one included.
+    const { paint, placed } = setup(644)
+    useMarketStore.setState({ candles: candles(Array.from({ length: 200 }, (_, i) => 100 + (i % 7))) })
+    paint()
+    const times = placed.filter((p) => /^\d\d:\d\d$/.test(p.text) && p.y > 250)
+    expect(times.length).toBeGreaterThan(4)
+    for (const p of times) expect(p.x - (p.text.length * 6) / 2).toBeGreaterThanOrEqual(12)
+  })
+
   it('leaves EMA and RSI out until there are enough candles', () => {
     const { paint, texts } = setup()
     useMarketStore.setState({ candles: candles([100, 101, 102, 103, 104]) })
