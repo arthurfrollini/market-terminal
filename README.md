@@ -2,6 +2,8 @@
 
 A live crypto market screen in the browser: order book, depth chart, trade tape and order flow for 12 Binance spot pairs. It reads Binance's public market data directly and has no backend of its own.
 
+Open it at [arthurfrollini.github.io/market-terminal](https://arthurfrollini.github.io/market-terminal/). Add `?stress=1` to start with the simulated 5,000 msg/s feed.
+
 ![Market Terminal showing BTC/USDT with the depth chart, trade tape and order book](docs/screenshot.png)
 
 ## What it does
@@ -100,3 +102,5 @@ The components are tested with Testing Library in jsdom: the order book ladder, 
 Coverage is 100% of lines and 92% of branches. `npm run coverage` fails below 95% of lines or 85% of branches.
 
 The Playwright tests build the app in e2e mode and run it against a mock of Binance's REST and WebSocket endpoints served from one local Node process. They cover the book and its diffs, trades, reconnecting after the network drops, resyncing after a sequence gap, switching pairs, keeping 3,000 trades with only the visible rows in the DOM, and stress test mode. The `?ws=` and `?rest=` overrides that point the app at the mock only exist in dev and e2e builds; the production build compiles them out.
+
+GitHub Actions runs all of these on every pull request and every push to `main`. A push to `main` that passes is published to GitHub Pages.

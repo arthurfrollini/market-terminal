@@ -137,5 +137,5 @@ describe('MarketEngine', () => {
     }
     expect(onNeedSnapshot).not.toHaveBeenCalled()
     expect(engine.bookState).toBe('live')
-  })
+  }, 30_000) // ~2 s locally with coverage, over 5 s on a busy CI runner
 })
