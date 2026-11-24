@@ -140,12 +140,12 @@ export function DepthChart() {
   useEffect(requestDraw, [priceDecimals, baseAsset, requestDraw])
 
   return (
-    <section className="depth panel" aria-label="Market depth">
-      <div className="panel-head">
-        <h2 className="panel-title">Depth</h2>
-        <span className="panel-meta">Cumulative size within 0.5% of mid</span>
-      </div>
-      <canvas ref={canvasRef} className="depth-canvas" data-testid="depth-canvas" role="img" aria-label="Cumulative bid and ask depth" />
-    </section>
+    <canvas
+      ref={canvasRef}
+      className="chart-canvas"
+      data-testid="depth-canvas"
+      role="img"
+      aria-label="Cumulative bid and ask depth within 0.5% of mid"
+    />
   )
 }

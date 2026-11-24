@@ -72,6 +72,35 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+/**
+ * Makes every canvas return a 2D context that records the text drawn (and where) and the path calls;
+ * every other call is a no-op.
+ */
+export function fakeCanvasContext() {
+  const texts: string[] = []
+  const placed: { text: string; x: number; y: number }[] = []
+  const calls: string[] = []
+  const ctx = new Proxy({} as Record<string | symbol, unknown>, {
+    get(target, key) {
+      if (key in target) return target[key]
+      if (key === 'fillText') {
+        return (text: string, x: number, y: number) => {
+          texts.push(text)
+          placed.push({ text, x, y })
+        }
+      }
+      if (key === 'measureText') return (text: string) => ({ width: text.length * 6 })
+      return () => calls.push(String(key))
+    },
+    set(target, key, value) {
+      target[key] = value
+      return true
+    },
+  })
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as unknown as CanvasRenderingContext2D)
+  return { texts, placed, calls, clear: () => { texts.length = 0; placed.length = 0; calls.length = 0 } }
+}
+
 export function renderWithMarket(ui: ReactElement, { info = BTC as SymbolInfo | null } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   if (info) client.setQueryData(symbolInfoQuery(info.symbol).queryKey, info)

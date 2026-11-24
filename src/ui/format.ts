@@ -35,3 +35,9 @@ export function formatTime(ms: number): string {
 export function qtyDecimals(stepDecimals: number): number {
   return Math.min(stepDecimals, 5)
 }
+
+/** Local HH:MM, for chart time axes. */
+export function formatClock(ms: number): string {
+  const d = new Date(ms)
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
