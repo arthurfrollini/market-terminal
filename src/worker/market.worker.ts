@@ -48,6 +48,7 @@ function startFeed(): void {
       midPrice: engine.referencePrice ?? 100,
       tickSize,
       messagesPerSecond: stress.messagesPerSecond,
+      interval: engine.interval,
       onMessage: (text) => engine.handleMessage(text),
     })
     synthetic = feed
@@ -91,6 +92,7 @@ scope.onmessage = (e) => {
       const previous = engine.interval
       if (msg.interval === previous) break
       engine.setInterval(msg.interval)
+      synthetic?.setInterval(msg.interval)
       if (socket) {
         // Same socket, so the book keeps its sync. If it's down, the reconnect uses the new URL.
         socket.send(JSON.stringify({ method: 'UNSUBSCRIBE', params: [klineStream(engine.symbol, previous)], id: ++requestId }))

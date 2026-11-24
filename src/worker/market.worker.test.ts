@@ -155,6 +155,16 @@ describe('market worker', () => {
     expect(frame?.stats.msgsPerSec).toBeGreaterThan(0)
   })
 
+  it('builds candles for the new interval from the synthetic feed', () => {
+    send({ type: 'stress', enabled: true, messagesPerSecond: 1_000 })
+    send(start)
+    send({ type: 'interval', interval: '5m' })
+    vi.advanceTimersByTime(600)
+    const candles = pull()!.candles!
+    expect(candles.interval).toBe('5m')
+    expect(candles.time).toHaveLength(1)
+  })
+
   it('switching stress off closes the synthetic feed and opens the socket', () => {
     send({ type: 'stress', enabled: true, messagesPerSecond: 1_000 })
     send(start)

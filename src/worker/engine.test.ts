@@ -135,11 +135,15 @@ describe('MarketEngine', () => {
     engine.setGrouping(0.01)
     engine.resync('initial', false)
     engine.applySnapshot('BTCUSDT', feed.snapshot())
+    let candles = 0
     for (let i = 0; i < 500; i++) {
       feed.tick()
-      const book = engine.buildFrame()?.book
+      const frame = engine.buildFrame()
+      const book = frame?.book
       if (book) expect(book.bestBid!).toBeLessThan(book.bestAsk!)
+      if (frame?.candles) candles = frame.candles.time.length
     }
+    expect(candles).toBe(1)
     expect(onNeedSnapshot).not.toHaveBeenCalled()
     expect(engine.bookState).toBe('live')
   }, 30_000) // ~2 s locally with coverage, over 5 s on a busy CI runner
