@@ -93,7 +93,7 @@ Open `http://localhost:5173`. Add `?symbol=ETHUSDT` to start on another pair, or
 ```bash
 npm run typecheck
 npm run lint
-npm test        # Vitest: 175 tests
+npm test        # Vitest: 177 tests
 npm run coverage
 npm run e2e     # Playwright: 9 tests
 ```
