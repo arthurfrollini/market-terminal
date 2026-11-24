@@ -343,4 +343,17 @@ describe('MarketClient', () => {
       expect(store.getState()).toMatchObject({ interval: '1h', chartView: 'depth', candles: null })
     })
   })
+
+  it('runs the engine on the main thread with ?engine=main, for comparison', async () => {
+    vi.stubGlobal('location', { search: '?engine=main&stress=1' })
+    vi.resetModules()
+    const before = FakeWorker.last
+    const { marketClient } = await import('./client')
+    const { useMarketStore } = await import('./store')
+    marketClient.start('BTCUSDT', 0.01)
+    expect(FakeWorker.last).toBe(before) // no Web Worker
+    expect(useMarketStore.getState().engineThread).toBe('main')
+    await vi.waitFor(() => expect(useMarketStore.getState().conn.source).toBe('synthetic'))
+    marketClient.stop()
+  })
 })

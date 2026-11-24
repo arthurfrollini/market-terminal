@@ -58,9 +58,9 @@ TanStack Query fetches the pair's tick size once and keeps it, polls the 24h tic
 |---|---|
 | `src/domain/` | Pure logic with no I/O: Binance message types, the order book, level grouping, depth curves, the candle series with EMA and RSI, indicators, the ring buffer |
 | `src/net/` | The WebSocket wrapper with backoff and the silence watchdog |
-| `src/worker/` | `MarketEngine`, which turns raw messages into frames and runs in tests without a worker, and the worker that wires it to the socket |
+| `src/worker/` | `MarketEngine`, which turns raw messages into frames and runs in tests without a worker; `createMarketHost`, which runs the feed and the engine and answers the UI; and the worker entry that wires the host to its global scope |
 | `src/feed/` | The simulated feed for stress test mode |
-| `src/market/` | The main-thread client, the Zustand store and the worker protocol |
+| `src/market/` | The main-thread client, the Zustand store, the worker protocol and the in-thread stand-in for the worker behind `?engine=main` |
 | `src/api/` | REST queries |
 | `src/components/` | The panels |
 | `e2e/` | A local mock of Binance and the Playwright tests |
@@ -77,6 +77,17 @@ Measured on a Mac in Chrome against the production build, reading the numbers th
 
 75 fps is the display's refresh rate. DevTools throttling most likely slows only the main thread, so the worker figures in the last row are close to an unthrottled CPU. The book did not resync once in any of these runs. With the live BTC/USDT feed the event lag reads 150 to 200 ms, which includes the difference between the local clock and Binance's.
 
+### Worker versus main thread
+
+`?engine=main` runs the same code (feed, JSON parsing, order book, candles, indicators) on the main thread instead of the worker, so the two can be compared on one build. Both rows use the production build in Chrome on a Mac, stress test mode at 20,000 msg/s and an unthrottled CPU. Thread time comes from Chrome performance traces, two 8 s traces per mode. Frame rate, long tasks and delivered messages come from a separate 10 s run each.
+
+| Engine runs in | Main thread busy | Worker busy | Frame rate | Long tasks | Messages delivered |
+|---|---|---|---|---|---|
+| Web Worker (default) | 34 to 35% | 10 to 11% | 75 fps | 0 | 19,900/s |
+| Main thread (`?engine=main`) | 43% | no worker | 75 fps | 0 | 20,100/s |
+
+The worker takes about a fifth of the main thread's work away, close to the 10% it then spends itself. Its figure includes generating the simulated feed; the status bar times only the engine and reads about 5%. On this machine the headroom doesn't show up as frame rate: both modes hold 75 fps with no long tasks. Most of the main thread's remaining time goes to rendering what arrives at that rate, and with CPU throttling at 4x it is busy over 99% of the time in both modes, so on a slow device rendering is the next limit. The throttled runs aren't a fair comparison of the two modes, because the simulated feed shares the main thread with the engine in `?engine=main` and falls to about 15,000 msg/s, leaving less to draw.
+
 ## Running it
 
 You need Node.js 20.19+ or 22.12+.
@@ -86,14 +97,14 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. Add `?symbol=ETHUSDT` to start on another pair, or `?stress=1` to start in stress test mode.
+Open `http://localhost:5173`. Add `?symbol=ETHUSDT` to start on another pair, `?stress=1` to start in stress test mode, or `?engine=main` to run the engine on the main thread instead of the worker.
 
 ## Checks
 
 ```bash
 npm run typecheck
 npm run lint
-npm test        # Vitest: 177 tests
+npm test        # Vitest: 181 tests
 npm run coverage
 npm run e2e     # Playwright: 9 tests
 ```
