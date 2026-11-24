@@ -73,12 +73,14 @@ afterEach(() => {
 })
 
 /**
- * Makes every canvas return a 2D context that records the text drawn (and where) and the path calls;
+ * Makes every canvas return a 2D context that records the text drawn (and where), filled rectangles
+ * and the path calls;
  * every other call is a no-op.
  */
 export function fakeCanvasContext() {
   const texts: string[] = []
   const placed: { text: string; x: number; y: number }[] = []
+  const rects: { x: number; y: number; w: number; h: number }[] = []
   const calls: string[] = []
   const ctx = new Proxy({} as Record<string | symbol, unknown>, {
     get(target, key) {
@@ -89,6 +91,7 @@ export function fakeCanvasContext() {
           placed.push({ text, x, y })
         }
       }
+      if (key === 'fillRect') return (x: number, y: number, w: number, h: number) => rects.push({ x, y, w, h })
       if (key === 'measureText') return (text: string) => ({ width: text.length * 6 })
       return () => calls.push(String(key))
     },
@@ -98,7 +101,13 @@ export function fakeCanvasContext() {
     },
   })
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as unknown as CanvasRenderingContext2D)
-  return { texts, placed, calls, clear: () => { texts.length = 0; placed.length = 0; calls.length = 0 } }
+  const clear = () => {
+    texts.length = 0
+    placed.length = 0
+    rects.length = 0
+    calls.length = 0
+  }
+  return { texts, placed, rects, calls, clear }
 }
 
 export function renderWithMarket(ui: ReactElement, { info = BTC as SymbolInfo | null } = {}) {

@@ -18,17 +18,16 @@ function candles(closes: number[]): CandleFrame {
 
 const thirty = Array.from({ length: 30 }, (_, i) => 100 + i)
 
-function setup() {
-  const { texts, placed } = fakeCanvasContext()
+function setup(width = 600) {
+  const { texts, placed, rects, clear } = fakeCanvasContext()
   renderWithMarket(<CandleChart />)
   const canvas = screen.getByTestId('candle-canvas') as HTMLCanvasElement
-  act(() => FakeResizeObserver.all[0].resize(600, 300))
+  act(() => FakeResizeObserver.all[0].resize(width, 300))
   const paint = () => {
-    texts.length = 0
-    placed.length = 0
+    clear()
     act(() => animationFrame())
   }
-  return { canvas, texts, placed, paint }
+  return { canvas, texts, placed, rects, paint }
 }
 
 function hover(canvas: HTMLCanvasElement, offsetX: number) {
@@ -79,6 +78,27 @@ describe('CandleChart', () => {
     fireEvent.pointerLeave(canvas)
     paint()
     expect(texts).toContain('C 129.00')
+  })
+
+  it('wraps the legend onto a second line when the chart is narrow', () => {
+    const { paint, placed } = setup(300)
+    useMarketStore.setState({ candles: candles(thirty) })
+    paint()
+    const legend = placed.filter((p) => /^(O|H|L|C|Vol|EMA 20) /.test(p.text))
+    expect(legend).toHaveLength(6)
+    // The fake context measures 6 px per character; the plot ends at 300 - 80.
+    for (const p of legend) expect(p.x + p.text.length * 6).toBeLessThanOrEqual(220)
+    expect(new Set(legend.map((p) => p.y)).size).toBeGreaterThan(1)
+  })
+
+  it.each([600, 300])('keeps the candles below the legend at %i px wide', (width) => {
+    const { paint, placed, rects } = setup(width)
+    useMarketStore.setState({ candles: candles(thirty) })
+    paint()
+    const legendBottom = Math.max(...placed.filter((p) => p.text.startsWith('C ')).map((p) => p.y)) + 11
+    const bodies = rects.filter((r) => r.x < width - 80) // not the axis label boxes
+    expect(bodies.length).toBe(30)
+    for (const r of bodies) expect(r.y).toBeGreaterThanOrEqual(legendBottom)
   })
 
   it('leaves EMA and RSI out until there are enough candles', () => {

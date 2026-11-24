@@ -15,6 +15,7 @@ const PANE_GAP = 10
 const TIME_LABEL_SPACING = 80
 /** Grid labels closer than this to the last price label are skipped. */
 const LABEL_CLEARANCE = 14
+const LEGEND_LINE = 15
 
 interface DrawState extends CanvasView {
   priceDecimals: number
@@ -45,9 +46,44 @@ function draw(ctx: CanvasRenderingContext2D, candles: CandleFrame | null, s: Dra
   const right = PAD.left + plotW
   const cx = (i: number) => right - (n - i - 0.5) * slot
 
+  // The legend describes the candle under the pointer, or the latest one.
+  let hovered = -1
+  if (s.hoverX !== null && s.hoverX >= PAD.left && s.hoverX <= right) {
+    const i = n - 1 - Math.floor((right - s.hoverX) / slot)
+    if (i >= first) hovered = i
+  }
+  const shown = hovered >= 0 ? hovered : n - 1
+  const fmt = (v: number) => formatFixed(v, s.priceDecimals)
+  const tone = close[shown] >= open[shown] ? c.bid : c.ask
+  const items: [string, string][] = [
+    [formatClock(time[shown]), c.muted],
+    [`O ${fmt(open[shown])}`, tone],
+    [`H ${fmt(high[shown])}`, tone],
+    [`L ${fmt(low[shown])}`, tone],
+    [`C ${fmt(close[shown])}`, tone],
+    [`Vol ${formatCompact(volume[shown])}`, c.muted],
+  ]
+  if (Number.isFinite(ema[shown])) items.push([`EMA 20 ${fmt(ema[shown])}`, c.text])
+  // Wraps to a new line when an item would run past the plot, as on a phone.
+  const legendLeft = PAD.left + 6
+  const legend: { text: string; color: string; x: number; line: number }[] = []
+  let lx = legendLeft
+  let lines = 1
+  for (const [text, color] of items) {
+    const w = ctx.measureText(text).width
+    if (lx > legendLeft && lx + w > right) {
+      lx = legendLeft
+      lines++
+    }
+    legend.push({ text, color, x: lx, line: lines - 1 })
+    lx += w + 10
+  }
+
+  // Price pane under the legend, RSI pane at the bottom.
+  const priceTop = PAD.top + lines * LEGEND_LINE + 6
   const rsiH = Math.round(plotH * RSI_SHARE)
-  const priceH = plotH - rsiH - PANE_GAP
-  const rsiTop = PAD.top + priceH + PANE_GAP
+  const priceH = PAD.top + plotH - rsiH - PANE_GAP - priceTop
+  const rsiTop = priceTop + priceH + PANE_GAP
 
   let lo = Infinity
   let hi = -Infinity
@@ -58,7 +94,7 @@ function draw(ctx: CanvasRenderingContext2D, candles: CandleFrame | null, s: Dra
   const span = hi - lo || hi * 0.02 || 1
   lo -= span * 0.05
   hi += span * 0.05
-  const y = (p: number) => PAD.top + priceH - ((p - lo) / (hi - lo)) * priceH
+  const y = (p: number) => priceTop + priceH - ((p - lo) / (hi - lo)) * priceH
   const last = close[n - 1]
   const lastUp = last >= open[n - 1]
   const ly = Math.round(y(last)) + 0.5
@@ -153,60 +189,43 @@ function draw(ctx: CanvasRenderingContext2D, candles: CandleFrame | null, s: Dra
     ctx.fillText(formatClock(time[i]), cx(i), PAD.top + plotH + 6)
   }
 
-  // Crosshair on the candle under the pointer.
-  let shown = n - 1
-  if (s.hoverX !== null && s.hoverX >= PAD.left && s.hoverX <= right) {
-    const i = n - 1 - Math.floor((right - s.hoverX) / slot)
-    if (i >= first) {
-      shown = i
-      const x = Math.round(cx(i)) + 0.5
-      ctx.strokeStyle = c.text
-      ctx.globalAlpha = 0.4
-      ctx.beginPath()
-      ctx.moveTo(x, PAD.top)
-      ctx.lineTo(x, PAD.top + plotH)
-      if (s.hoverY !== null && s.hoverY >= PAD.top && s.hoverY <= PAD.top + priceH) {
-        ctx.moveTo(PAD.left, Math.round(s.hoverY) + 0.5)
-        ctx.lineTo(right, Math.round(s.hoverY) + 0.5)
-      }
-      ctx.stroke()
-      ctx.globalAlpha = 1
-      if (s.hoverY !== null && s.hoverY >= PAD.top && s.hoverY <= PAD.top + priceH) {
-        const p = lo + ((PAD.top + priceH - s.hoverY) / priceH) * (hi - lo)
-        ctx.fillStyle = c.panel
-        ctx.fillRect(right + 2, s.hoverY - 8, PAD.right - 2, 16)
-        ctx.fillStyle = c.text
-        ctx.textAlign = 'left'
-        ctx.textBaseline = 'middle'
-        ctx.fillText(formatFixed(p, s.priceDecimals), right + 8, s.hoverY)
-      }
+  // Crosshair on the candle under the pointer, with the price at the pointer on the axis.
+  if (hovered >= 0) {
+    const x = Math.round(cx(hovered)) + 0.5
+    const hy = s.hoverY ?? -1
+    const inPrice = hy >= priceTop && hy <= priceTop + priceH
+    ctx.strokeStyle = c.text
+    ctx.globalAlpha = 0.4
+    ctx.beginPath()
+    ctx.moveTo(x, priceTop)
+    ctx.lineTo(x, PAD.top + plotH)
+    if (inPrice) {
+      ctx.moveTo(PAD.left, Math.round(hy) + 0.5)
+      ctx.lineTo(right, Math.round(hy) + 0.5)
+    }
+    ctx.stroke()
+    ctx.globalAlpha = 1
+    if (inPrice) {
+      const p = lo + ((priceTop + priceH - hy) / priceH) * (hi - lo)
+      ctx.fillStyle = c.panel
+      ctx.fillRect(right + 2, hy - 8, PAD.right - 2, 16)
+      ctx.fillStyle = c.text
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(fmt(p), right + 8, hy)
     }
   }
 
-  // Legend for the hovered candle, or the latest one.
-  const fmt = (v: number) => formatFixed(v, s.priceDecimals)
-  const up = close[shown] >= open[shown]
-  const legend = (items: [string, string][], x: number, top: number) => {
-    ctx.textAlign = 'left'
-    ctx.textBaseline = 'top'
-    for (const [text, color] of items) {
-      ctx.fillStyle = color
-      ctx.fillText(text, x, top)
-      x += ctx.measureText(text).width + 10
-    }
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'top'
+  for (const item of legend) {
+    ctx.fillStyle = item.color
+    ctx.fillText(item.text, item.x, PAD.top + 2 + item.line * LEGEND_LINE)
   }
-  const tone = up ? c.bid : c.ask
-  const priceItems: [string, string][] = [
-    [formatClock(time[shown]), c.muted],
-    [`O ${fmt(open[shown])}`, tone],
-    [`H ${fmt(high[shown])}`, tone],
-    [`L ${fmt(low[shown])}`, tone],
-    [`C ${fmt(close[shown])}`, tone],
-    [`Vol ${formatCompact(volume[shown])}`, c.muted],
-  ]
-  if (Number.isFinite(ema[shown])) priceItems.push([`EMA 20 ${fmt(ema[shown])}`, c.text])
-  legend(priceItems, PAD.left + 6, PAD.top + 4)
-  if (Number.isFinite(rsi[shown])) legend([[`RSI 14 ${rsi[shown].toFixed(1)}`, c.text]], PAD.left + 6, rsiTop + 4)
+  if (Number.isFinite(rsi[shown])) {
+    ctx.fillStyle = c.text
+    ctx.fillText(`RSI 14 ${rsi[shown].toFixed(1)}`, legendLeft, rsiTop + 4)
+  }
 }
 
 /** Painted outside React, redrawn only when the candles change or the pointer moves. */
