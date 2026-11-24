@@ -1,8 +1,9 @@
 import { create } from 'zustand'
 import { DEFAULT_SYMBOL, START_IN_STRESS, TRADE_TAPE_CAPACITY } from '../config'
+import type { Interval } from '../domain/candles'
 import type { ResyncReason } from '../domain/orderBook'
 import { RingBuffer } from '../domain/ringBuffer'
-import type { BookFrame, ConnStatus, MarketStats, Ticker, Trade } from './types'
+import type { BookFrame, CandleFrame, ConnStatus, MarketStats, Ticker, Trade } from './types'
 
 /**
  * Trades live outside React state: copying a 10k-item array on every frame would cost more
@@ -20,11 +21,16 @@ export const EMPTY_STATS: MarketStats = {
   lastEventTime: 0,
 }
 
+export type ChartView = 'price' | 'depth'
+
 export interface MarketState {
   symbol: string
   conn: ConnStatus
   book: BookFrame | null
   ticker: Ticker | null
+  candles: CandleFrame | null
+  interval: Interval
+  chartView: ChartView
   stats: MarketStats
   /** Trades received since the symbol was selected; the tape keeps the newest 10k. */
   tradesTotal: number
@@ -44,6 +50,9 @@ export const initialMarketState = (symbol = DEFAULT_SYMBOL): MarketState => ({
   conn: { state: 'idle', attempt: 0, retryInMs: null, source: START_IN_STRESS ? 'synthetic' : 'binance' },
   book: null,
   ticker: null,
+  candles: null,
+  interval: '1m',
+  chartView: 'price',
   stats: EMPTY_STATS,
   tradesTotal: 0,
   grouping: null,

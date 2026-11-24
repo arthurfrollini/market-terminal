@@ -2,6 +2,7 @@ import { QueryClient, queryOptions } from '@tanstack/react-query'
 import { REST_BASE, SNAPSHOT_LIMIT } from '../config'
 import { stepDecimals } from '../domain/aggregate'
 import type { DepthSnapshot } from '../domain/binance'
+import type { Candle, Interval } from '../domain/candles'
 
 export class HttpError extends Error {
   readonly status: number
@@ -102,6 +103,30 @@ export const depthSnapshotQuery = (symbol: string) =>
   queryOptions({
     queryKey: ['depthSnapshot', symbol],
     queryFn: ({ signal }) => getJson<DepthSnapshot>(`/api/v3/depth?symbol=${symbol}&limit=${SNAPSHOT_LIMIT}`, signal),
+    staleTime: 0,
+    gcTime: 0,
+  })
+
+/** `[openTime, open, high, low, close, volume, closeTime, ...]`, prices as strings. */
+type RawKline = [number, string, string, string, string, string, ...unknown[]]
+
+const KLINES_LIMIT = 500
+
+/** Never cached: history only fills the series the worker has just started over. */
+export const klinesQuery = (symbol: string, interval: Interval) =>
+  queryOptions({
+    queryKey: ['klines', symbol, interval],
+    queryFn: async ({ signal }): Promise<Candle[]> => {
+      const rows = await getJson<RawKline[]>(`/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${KLINES_LIMIT}`, signal)
+      return rows.map(([openTime, o, h, l, c, v]) => ({
+        openTime,
+        open: Number(o),
+        high: Number(h),
+        low: Number(l),
+        close: Number(c),
+        volume: Number(v),
+      }))
+    },
     staleTime: 0,
     gcTime: 0,
   })

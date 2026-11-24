@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DepthSnapshot } from '../domain/binance'
-import type { BookFrame, FromWorker, MarketStats, ToWorker, Trade, WorkerFrame } from './types'
+import type { BookFrame, CandleFrame, FromWorker, MarketStats, ToWorker, Trade, WorkerFrame } from './types'
 
 class FakeWorker {
   static last: FakeWorker
@@ -57,6 +57,10 @@ const frame = (over: Partial<WorkerFrame> = {}): WorkerFrame => ({
 })
 const trade = (id: number): Trade => ({ id, price: 100, qty: 1, time: 0, side: 'buy' })
 const liveBook = { status: 'live' } as BookFrame
+const candleFrame = (over: Partial<CandleFrame> = {}) => ({ symbol: 'BTCUSDT', interval: '1m', ...over }) as CandleFrame
+const klineRow = [60_000, '1', '3', '0.5', '2', '10', 119_999, '20', 5, '1', '2', '0']
+const historyCandle = { openTime: 60_000, open: 1, high: 3, low: 0.5, close: 2, volume: 10 }
+const isKlines = (input: unknown) => String(input).includes('/api/v3/klines')
 
 const fetchMock = vi.fn<typeof fetch>()
 
@@ -78,7 +82,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock)
   vi.spyOn(performance, 'now').mockReturnValue(0)
   fetchMock.mockReset()
-  fetchMock.mockImplementation(async () => new Response(JSON.stringify(snapshot)))
+  fetchMock.mockImplementation(async (input) => new Response(JSON.stringify(isKlines(input) ? [klineRow] : snapshot)))
 })
 
 afterEach(() => {
@@ -249,5 +253,94 @@ describe('MarketClient', () => {
 
     client.start('BTCUSDT', 0.01)
     expect(FakeWorker.last).not.toBe(worker)
+  })
+
+  describe('candles', () => {
+    it('fetches history on request and hands it to the worker', async () => {
+      const { worker } = await setup()
+      worker.reply({ type: 'need-history', symbol: 'BTCUSDT', interval: '1m' })
+      await vi.waitFor(() => expect(worker.sent('history')).toHaveLength(1))
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        'https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=500',
+      )
+      expect(worker.sent('history')[0]).toEqual({ type: 'history', symbol: 'BTCUSDT', interval: '1m', candles: [historyCandle] })
+    })
+
+    it('drops history that arrives after the user changed the interval', async () => {
+      const { client, worker } = await setup()
+      worker.reply({ type: 'need-history', symbol: 'BTCUSDT', interval: '1m' })
+      client.setInterval('5m')
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+      await new Promise((r) => setTimeout(r, 0))
+      expect(worker.sent('history')).toHaveLength(0)
+    })
+
+    describe('when the history request fails', () => {
+      async function failOnce() {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+        const ctx = await setup()
+        fetchMock.mockResolvedValueOnce(new Response('', { status: 400 }))
+        ctx.worker.reply({ type: 'need-history', symbol: 'BTCUSDT', interval: '1m' })
+        await vi.advanceTimersByTimeAsync(0)
+        expect(fetchMock).toHaveBeenCalledOnce()
+        return ctx
+      }
+
+      it('tries again after 2 s', async () => {
+        const { worker } = await failOnce()
+        await vi.advanceTimersByTimeAsync(2_000)
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+        expect(worker.sent('history')).toHaveLength(1)
+      })
+
+      it('gives up if the user changed the interval meanwhile', async () => {
+        const { client } = await failOnce()
+        client.setInterval('15m')
+        await vi.advanceTimersByTimeAsync(2_000)
+        expect(fetchMock).toHaveBeenCalledOnce()
+      })
+
+      it('gives up if the worker asked for history again meanwhile', async () => {
+        const { worker } = await failOnce()
+        worker.reply({ type: 'need-history', symbol: 'BTCUSDT', interval: '1m' })
+        await vi.advanceTimersByTimeAsync(2_000)
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+      })
+    })
+
+    it('stores candles from a frame, but not ones for an interval the user left', async () => {
+      const { client, store, worker } = await setup()
+      const candles = candleFrame()
+      worker.reply({ type: 'frame', frame: frame({ candles }) })
+      expect(store.getState().candles).toBe(candles)
+      worker.reply({ type: 'frame', frame: frame() })
+      expect(store.getState().candles).toBe(candles)
+
+      client.setInterval('5m')
+      expect(store.getState().candles).toBeNull()
+      worker.reply({ type: 'frame', frame: frame({ candles: candleFrame({ interval: '1m' }) }) })
+      expect(store.getState().candles).toBeNull()
+    })
+
+    it('forwards an interval change once and starts the next feed on it', async () => {
+      const { client, store, worker } = await setup()
+      client.setInterval('5m')
+      client.setInterval('5m')
+      expect(store.getState().interval).toBe('5m')
+      expect(worker.sent('interval')).toEqual([{ type: 'interval', interval: '5m' }])
+
+      client.stop()
+      client.start('BTCUSDT', 0.01)
+      expect(FakeWorker.last.sent('start')[0]).toMatchObject({ interval: '5m' })
+    })
+
+    it('keeps the interval and chart view across symbols and stress mode', async () => {
+      const { client, store } = await setup()
+      client.setInterval('1h')
+      client.setChartView('depth')
+      client.selectSymbol('ETHUSDT')
+      client.setStress(true)
+      expect(store.getState()).toMatchObject({ interval: '1h', chartView: 'depth', candles: null })
+    })
   })
 })

@@ -1,6 +1,6 @@
 import { QueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { HttpError, depthSnapshotQuery, retryable, symbolInfoQuery, tickers24hQuery } from './binance'
+import { HttpError, depthSnapshotQuery, klinesQuery, retryable, symbolInfoQuery, tickers24hQuery } from './binance'
 
 const fetchMock = vi.fn<typeof fetch>()
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
@@ -96,5 +96,21 @@ describe('depthSnapshotQuery', () => {
     expect(await client().fetchQuery(depthSnapshotQuery('ETHUSDT'))).toEqual(snapshot)
     expect(fetchMock.mock.calls[0][0]).toBe('https://data-api.binance.vision/api/v3/depth?symbol=ETHUSDT&limit=5000')
     expect(depthSnapshotQuery('ETHUSDT')).toMatchObject({ staleTime: 0, gcTime: 0 })
+  })
+})
+
+describe('klinesQuery', () => {
+  it('requests 500 candles for the interval, parses them and never caches them', async () => {
+    fetchMock.mockResolvedValue(
+      json([[1795528800000, '60014.59', '60078.84', '59984.26', '60067.66', '9.57028', 1795528859999, '574580.6', 2311, '7.4', '447100.2', '0']]),
+    )
+    const candles = await client().fetchQuery(klinesQuery('BTCUSDT', '5m'))
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=5m&limit=500',
+    )
+    expect(candles).toEqual([
+      { openTime: 1795528800000, open: 60014.59, high: 60078.84, low: 59984.26, close: 60067.66, volume: 9.57028 },
+    ])
+    expect(klinesQuery('BTCUSDT', '5m')).toMatchObject({ queryKey: ['klines', 'BTCUSDT', '5m'], staleTime: 0, gcTime: 0 })
   })
 })
