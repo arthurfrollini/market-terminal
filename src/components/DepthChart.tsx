@@ -1,31 +1,14 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { useMarketStore } from '../market/store'
 import type { BookFrame } from '../market/types'
 import { formatCompact, formatFixed } from '../ui/format'
+import { useCanvasPainter, type CanvasView, type Palette } from '../ui/useCanvasPainter'
 import { useSymbolInfo } from '../ui/useSymbolInfo'
 
 const PAD = { top: 16, right: 64, bottom: 28, left: 12 }
 const FONT = '11px "Geist Mono", ui-monospace, monospace'
 
-interface Palette {
-  bid: string
-  ask: string
-  grid: string
-  text: string
-  muted: string
-  panel: string
-}
-
-function readPalette(el: Element): Palette {
-  const css = getComputedStyle(el)
-  const v = (name: string) => css.getPropertyValue(name).trim()
-  return { bid: v('--bid'), ask: v('--ask'), grid: v('--line'), text: v('--text'), muted: v('--muted'), panel: v('--panel-raised') }
-}
-
-interface DrawState {
-  width: number
-  height: number
-  hoverX: number | null
+interface DrawState extends CanvasView {
   priceDecimals: number
   base: string
 }
@@ -146,75 +129,15 @@ function draw(ctx: CanvasRenderingContext2D, book: BookFrame | null, s: DrawStat
   }
 }
 
-/**
- * Painted outside React: the component subscribes to the store directly and redraws on the next
- * animation frame only when the book changed or the pointer moved.
- */
+/** Painted outside React, redrawn only when the book changes or the pointer moves. */
 export function DepthChart() {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const info = useSymbolInfo()
-  const view = useRef<DrawState>({ width: 0, height: 0, hoverX: null, priceDecimals: 2, base: '' })
-  const requestDraw = useRef<() => void>(() => {})
+  const { priceDecimals, baseAsset } = useSymbolInfo()
+  const { canvasRef, requestDraw } = useCanvasPainter(
+    (ctx, view, palette) => draw(ctx, useMarketStore.getState().book, { ...view, priceDecimals, base: baseAsset }, palette),
+    (s, prev) => s.book !== prev.book,
+  )
 
-  useEffect(() => {
-    view.current.priceDecimals = info.priceDecimals
-    view.current.base = info.baseAsset
-    requestDraw.current()
-  }, [info.priceDecimals, info.baseAsset])
-
-  useEffect(() => {
-    const canvas = canvasRef.current!
-    const ctx = canvas.getContext('2d')!
-    const palette = readPalette(canvas)
-    let raf = 0
-    let draws = 0
-
-    const paint = () => {
-      raf = 0
-      const dpr = window.devicePixelRatio || 1
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      draw(ctx, useMarketStore.getState().book, view.current, palette)
-      canvas.dataset.draws = String(++draws)
-    }
-    const schedule = () => {
-      if (!raf) raf = requestAnimationFrame(paint)
-    }
-    requestDraw.current = schedule
-
-    const resize = new ResizeObserver(([entry]) => {
-      const { width, height } = entry.contentRect
-      const dpr = window.devicePixelRatio || 1
-      view.current.width = width
-      view.current.height = height
-      canvas.width = Math.round(width * dpr)
-      canvas.height = Math.round(height * dpr)
-      schedule()
-    })
-    resize.observe(canvas)
-
-    const unsubscribe = useMarketStore.subscribe((s, prev) => {
-      if (s.book !== prev.book) schedule()
-    })
-    const onMove = (e: PointerEvent) => {
-      view.current.hoverX = e.offsetX
-      schedule()
-    }
-    const onLeave = () => {
-      view.current.hoverX = null
-      schedule()
-    }
-    canvas.addEventListener('pointermove', onMove)
-    canvas.addEventListener('pointerleave', onLeave)
-
-    return () => {
-      cancelAnimationFrame(raf)
-      resize.disconnect()
-      unsubscribe()
-      canvas.removeEventListener('pointermove', onMove)
-      canvas.removeEventListener('pointerleave', onLeave)
-      requestDraw.current = () => {}
-    }
-  }, [])
+  useEffect(requestDraw, [priceDecimals, baseAsset, requestDraw])
 
   return (
     <section className="depth panel" aria-label="Market depth">
