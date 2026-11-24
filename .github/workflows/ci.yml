@@ -47,17 +47,11 @@ jobs:
           path: test-results/
           retention-days: 7
 
-  # Publishes main to GitHub Pages once both jobs pass.
-  deploy:
+  # Builds the Pages artifact for main once both jobs pass.
+  pages-build:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [check, e2e]
     runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -70,5 +64,18 @@ jobs:
       - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
+
+  # A separate job: deploy-pages looks the artifact up by name, and right after the upload
+  # in the same job the lookup can come back empty.
+  deploy:
+    needs: pages-build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v5
