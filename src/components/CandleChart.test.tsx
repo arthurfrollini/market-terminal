@@ -7,11 +7,11 @@ import type { CandleFrame } from '../market/types'
 import { FakeResizeObserver, animationFrame, fakeCanvasContext, pendingFrames, renderWithMarket } from '../test/dom'
 import { CandleChart } from './CandleChart'
 
-/** Candles a minute apart; each opens 1 below its close, with a 2 up / 3 down range. */
-function candles(closes: number[]): CandleFrame {
+/** Candles `step` ms apart (a minute by default); each opens 1 below its close, with a 2 up / 3 down range. */
+function candles(closes: number[], step = 60_000, start = 0): CandleFrame {
   const s = new CandleSeries()
   closes.forEach((close, i) =>
-    s.upsert({ openTime: i * 60_000, open: close - 1, high: close + 2, low: close - 3, close, volume: 10 + i }),
+    s.upsert({ openTime: start + i * step, open: close - 1, high: close + 2, low: close - 3, close, volume: 10 + i }),
   )
   return { symbol: 'BTCUSDT', interval: '1m', ...s.toArrays() }
 }
@@ -109,6 +109,18 @@ describe('CandleChart', () => {
     const times = placed.filter((p) => /^\d\d:\d\d$/.test(p.text) && p.y > 250)
     expect(times.length).toBeGreaterThan(4)
     for (const p of times) expect(p.x - (p.text.length * 6) / 2).toBeGreaterThanOrEqual(12)
+  })
+
+  it('labels days instead of clock times when the candles span several days', () => {
+    const { paint, placed } = setup()
+    const start = new Date(2026, 10, 20, 0, 0).getTime()
+    useMarketStore.setState({ candles: candles(Array.from({ length: 200 }, (_, i) => 100 + (i % 7)), 3_600_000, start) })
+    paint()
+    const axis = placed.filter((p) => p.y > 250 && p.x < 520).map((p) => p.text)
+    expect(axis.length).toBeGreaterThan(2)
+    for (const label of axis) expect(label).toMatch(/^[A-Z][a-z]{2} \d{1,2}$/)
+    // The legend keeps the hour, with the date in front.
+    expect(placed.map((p) => p.text)).toContain('Nov 28 07:00')
   })
 
   it('leaves EMA and RSI out until there are enough candles', () => {

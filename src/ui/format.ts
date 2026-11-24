@@ -41,3 +41,10 @@ export function formatClock(ms: number): string {
   const d = new Date(ms)
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
+
+const day = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
+
+/** Local "Nov 3", for chart axes that span several days. */
+export function formatDay(ms: number): string {
+  return day.format(ms)
+}

@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useMarketStore } from '../market/store'
 import type { CandleFrame } from '../market/types'
-import { formatClock, formatCompact, formatFixed } from '../ui/format'
+import { formatClock, formatCompact, formatDay, formatFixed } from '../ui/format'
 import { useCanvasPainter, type CanvasView, type Palette } from '../ui/useCanvasPainter'
 import { useSymbolInfo } from '../ui/useSymbolInfo'
 
@@ -16,6 +16,7 @@ const TIME_LABEL_SPACING = 80
 /** Grid labels closer than this to the last price label are skipped. */
 const LABEL_CLEARANCE = 14
 const LEGEND_LINE = 15
+const DAY_MS = 86_400_000
 
 interface DrawState extends CanvasView {
   priceDecimals: number
@@ -53,10 +54,12 @@ function draw(ctx: CanvasRenderingContext2D, candles: CandleFrame | null, s: Dra
     if (i >= first) hovered = i
   }
   const shown = hovered >= 0 ? hovered : n - 1
+  // Clock times alone are ambiguous once the visible candles cover more than a day.
+  const multiDay = time[n - 1] - time[first] > DAY_MS
   const fmt = (v: number) => formatFixed(v, s.priceDecimals)
   const tone = close[shown] >= open[shown] ? c.bid : c.ask
   const items: [string, string][] = [
-    [formatClock(time[shown]), c.muted],
+    [multiDay ? `${formatDay(time[shown])} ${formatClock(time[shown])}` : formatClock(time[shown]), c.muted],
     [`O ${fmt(open[shown])}`, tone],
     [`H ${fmt(high[shown])}`, tone],
     [`L ${fmt(low[shown])}`, tone],
@@ -185,10 +188,13 @@ function draw(ctx: CanvasRenderingContext2D, candles: CandleFrame | null, s: Dra
   ctx.textAlign = 'center'
   ctx.textBaseline = 'top'
   const every = Math.max(1, Math.ceil(TIME_LABEL_SPACING / slot))
+  let previous = ''
   for (let i = n - 1 - Math.floor(every / 2); i >= first; i -= every) {
-    const label = formatClock(time[i])
+    // Over several days, one date label per day; clock times otherwise.
+    const label = multiDay ? formatDay(time[i]) : formatClock(time[i])
     if (cx(i) - ctx.measureText(label).width / 2 < PAD.left) break
-    ctx.fillText(label, cx(i), PAD.top + plotH + 6)
+    if (label !== previous) ctx.fillText(label, cx(i), PAD.top + plotH + 6)
+    previous = label
   }
 
   // Crosshair on the candle under the pointer, with the price at the pointer on the axis.
