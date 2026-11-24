@@ -21,7 +21,7 @@ class MarketClient {
     const worker = this.ensureWorker()
     const { stress, stressRate, grouping } = useMarketStore.getState()
     worker.postMessage({ type: 'stress', enabled: stress, messagesPerSecond: stressRate } satisfies ToWorker)
-    this.send({ type: 'start', symbol, wsBase: WS_BASE, grouping: grouping ?? tickSize, tickSize })
+    this.send({ type: 'start', symbol, wsBase: WS_BASE, grouping: grouping ?? tickSize, tickSize, interval: '1m' })
   }
 
   stop(): void {

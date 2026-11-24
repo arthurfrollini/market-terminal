@@ -1,5 +1,6 @@
 import type { DepthCurve, GroupedLevels } from '../domain/aggregate'
 import type { DepthSnapshot } from '../domain/binance'
+import type { Candle, CandleArrays, Interval } from '../domain/candles'
 import type { BookSyncState, ResyncReason } from '../domain/orderBook'
 
 export type Side = 'buy' | 'sell'
@@ -38,6 +39,11 @@ export interface BookFrame {
   depth: { bids: DepthCurve; asks: DepthCurve; rangePct: number }
 }
 
+export interface CandleFrame extends CandleArrays {
+  symbol: string
+  interval: Interval
+}
+
 export interface MarketStats {
   msgsPerSec: number
   tradesPerSec: number
@@ -61,6 +67,8 @@ export interface WorkerFrame {
   book: BookFrame | null
   trades: Trade[]
   ticker: Ticker | null
+  /** Null when the candles have not changed since the last frame. */
+  candles: CandleFrame | null
   stats: MarketStats
 }
 
@@ -76,8 +84,10 @@ export interface ConnStatus {
 }
 
 export type ToWorker =
-  | { type: 'start'; symbol: string; wsBase: string; grouping: number; tickSize: number }
+  | { type: 'start'; symbol: string; wsBase: string; grouping: number; tickSize: number; interval: Interval }
   | { type: 'snapshot'; symbol: string; snapshot: DepthSnapshot }
+  | { type: 'interval'; interval: Interval }
+  | { type: 'history'; symbol: string; interval: Interval; candles: Candle[] }
   | { type: 'grouping'; step: number }
   | { type: 'stress'; enabled: boolean; messagesPerSecond: number }
   | { type: 'pull' }
@@ -86,4 +96,5 @@ export type ToWorker =
 export type FromWorker =
   | { type: 'status'; status: ConnStatus }
   | { type: 'need-snapshot'; symbol: string; reason: ResyncReason }
+  | { type: 'need-history'; symbol: string; interval: Interval }
   | { type: 'frame'; frame: WorkerFrame | null }

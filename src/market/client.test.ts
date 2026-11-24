@@ -51,6 +51,7 @@ const frame = (over: Partial<WorkerFrame> = {}): WorkerFrame => ({
   book: null,
   trades: [],
   ticker: null,
+  candles: null,
   stats: stats(),
   ...over,
 })
@@ -91,7 +92,7 @@ describe('MarketClient', () => {
     const { worker } = await setup()
     expect(worker.posted).toEqual([
       { type: 'stress', enabled: false, messagesPerSecond: 5000 },
-      { type: 'start', symbol: 'BTCUSDT', wsBase: 'wss://data-stream.binance.vision', grouping: 0.01, tickSize: 0.01 },
+      { type: 'start', symbol: 'BTCUSDT', wsBase: 'wss://data-stream.binance.vision', grouping: 0.01, tickSize: 0.01, interval: '1m' },
     ])
   })
 
